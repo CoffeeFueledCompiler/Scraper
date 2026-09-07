@@ -13,7 +13,6 @@
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "@sparticuz/chromium": "^149.0.0",
-    "@vercel/blob": "^2.8.0",
     "bcryptjs": "^3.0.3",
     "next": "^15.0.0",
     "next-auth": "^4.24.15",

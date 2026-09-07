@@ -1,8 +1,12 @@
-// This project only reads the User table from the shared Postgres DB owned
-// by the other ("The Clientist") project — it never migrates this schema
-// against that database. Only the User model is declared here, matching
-// that project's schema.prisma exactly; Ticket/Task and the GHL sync models
-// live there and aren't needed for authentication.
+// This project reads the User table from the shared Postgres DB owned by
+// the other ("The Clientist") project for auth (matches that project's
+// schema.prisma exactly — Ticket/Task/GHL sync models live there and aren't
+// needed here), and owns its own separate ScrapeLead table in the same DB
+// for this app's pipeline state (named to avoid reading like a CRM lead next
+// to Contact/Opportunity). That table was created by hand via a targeted
+// CREATE TABLE (see scripts/create-lead-table.sql), not `prisma db push` —
+// this schema is never diffed against the live DB, so a mismatch here can't
+// trigger an ALTER on the other project's tables.
 generator client {
   provider = "prisma-client-js"
 }
@@ -21,4 +25,24 @@ model User {
   resetTokenHash      String?   @unique
   resetTokenExpiresAt DateTime?
   createdAt           DateTime  @default(now())
+}
+
+model Lead {
+  id             String   @id @default(cuid())
+  name           String
+  phone          String   @default("")
+  website        String   @default("")
+  city           String   @default("")
+  niche          String   @default("")
+  email          String   @default("")
+  observation    String   @default("")
+  impact         String   @default("")
+  solution       String   @default("")
+  status         String   @default("")
+  subject        String   @default("")
+  generatedEmail String   @default("")
+  createdAt      DateTime @default(now())
+
+  @@unique([name, city])
+  @@map("ScrapeLead")
 }

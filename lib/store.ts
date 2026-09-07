@@ -1,43 +1,43 @@
-// Leads store, backed by Vercel Blob — a serverless function's local disk is
-// ephemeral and not shared across instances, so a plain JSON file (the old
-// approach) doesn't survive between requests once deployed.
-//
-// Needs a BLOB_READ_WRITE_TOKEN env var — from the Vercel dashboard's
-// Storage tab (create a Blob store, copy its token), works from local dev
-// too, not just when actually running on Vercel.
-//
-// ponytail: every write creates a new blob rather than overwriting in place
-// (avoids depending on @vercel/blob's overwrite semantics matching what this
-// was written against) — old versions pile up in the store. Fine at personal
-// scale; add a cleanup pass (delete all but the newest per prefix) if the
-// blob list ever gets large enough to slow reads down.
-import { put, list } from "@vercel/blob";
-import { Lead, leadKey } from "./schema.ts";
+// Leads store — the app's own Lead table in the shared Postgres DB (see
+// prisma/schema.prisma and scripts/create-lead-table.sql). Strongly
+// consistent, unlike the Vercel Blob approach this replaced: a write is
+// visible to the very next read, no propagation lag.
+import { prisma } from "./prisma.ts";
+import type { Lead } from "./schema.ts";
 
-const PATHNAME_PREFIX = "leads.json";
-
-export async function readLeads(): Promise<Lead[]> {
-  const { blobs } = await list({ prefix: PATHNAME_PREFIX });
-  if (blobs.length === 0) return [];
-  const latest = blobs.reduce((a, b) => (new Date(a.uploadedAt) > new Date(b.uploadedAt) ? a : b));
-  // A private-store blob URL isn't fetchable on its own — it needs the same
-  // token as an Authorization header.
-  const res = await fetch(latest.url, { headers: { Authorization: `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}` } });
-  return res.json();
+// Prisma's `status` column is a plain string; narrow it to the TS union.
+function fromRow(row: { id: string; createdAt: Date; status: string } & Omit<Lead, "status">): Lead {
+  const { id, createdAt, ...lead } = row;
+  return lead as Lead;
 }
 
+export async function readLeads(): Promise<Lead[]> {
+  const rows = await prisma.lead.findMany({ orderBy: { createdAt: "asc" } });
+  return rows.map(fromRow);
+}
+
+// Replaces the entire table's contents — used by the "clear local data" action.
+//
+// ponytail: not wrapped in a $transaction — batching N+1 dependent queries
+// under one deadline was timing out (P2028) against Render's Postgres
+// round-trip latency. Atomicity isn't load-bearing here (single-user tool,
+// each row independent); a crash mid-write leaving a partial table is an
+// acceptable ceiling, not one worth a slower/more complex fix for.
 export async function writeLeads(leads: Lead[]): Promise<void> {
-  await put(PATHNAME_PREFIX, JSON.stringify(leads), { access: "private", contentType: "application/json" });
+  await prisma.lead.deleteMany();
+  for (const data of leads) {
+    await prisma.lead.create({ data });
+  }
 }
 
 // Merge new/updated leads into the store, keyed by name+city.
 export async function upsertLeads(updates: Lead[]): Promise<Lead[]> {
-  const leads = await readLeads();
-  const byKey = new Map(leads.map((l) => [leadKey(l), l]));
-  for (const u of updates) {
-    byKey.set(leadKey(u), { ...byKey.get(leadKey(u)), ...u });
+  for (const data of updates) {
+    await prisma.lead.upsert({
+      where: { name_city: { name: data.name, city: data.city } },
+      create: data,
+      update: data,
+    });
   }
-  const merged = Array.from(byKey.values());
-  await writeLeads(merged);
-  return merged;
+  return readLeads();
 }
