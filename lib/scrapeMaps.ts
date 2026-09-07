@@ -2,7 +2,7 @@
 // Automates a real Chromium browser against Google Maps' public UI. Google's
 // ToS prohibit automated scraping of their services — keep usage light and
 // occasional, not continuous/high-volume.
-import { chromium } from "playwright";
+import { launchBrowser } from "./browser.ts";
 import { emptyLead } from "./schema.ts";
 import type { Lead } from "./schema.ts";
 
@@ -20,7 +20,7 @@ export async function scrapeGoogleMaps(query: string, limit: number, headless = 
   const results: Lead[] = [];
   const fallback = guessNicheAndCityFromQuery(query);
 
-  const browser = await chromium.launch({ headless });
+  const browser = await launchBrowser(headless);
   const context = await browser.newContext({ locale: "en-US", viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
 

@@ -1,0 +1,24 @@
+// This project only reads the User table from the shared Postgres DB owned
+// by the other ("The Clientist") project — it never migrates this schema
+// against that database. Only the User model is declared here, matching
+// that project's schema.prisma exactly; Ticket/Task and the GHL sync models
+// live there and aren't needed for authentication.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                  String    @id @default(cuid())
+  email               String    @unique
+  name                String?
+  password            String
+  tempPassword        Boolean   @default(false)
+  role                String    @default("user")
+  resetTokenHash      String?   @unique
+  resetTokenExpiresAt DateTime?
+  createdAt           DateTime  @default(now())
+}

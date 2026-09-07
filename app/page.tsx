@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSession, signOut } from "next-auth/react";
 import { Lead } from "@/lib/schema";
 
 async function postJSON(url: string, body: unknown) {
@@ -42,6 +43,7 @@ function StepButton({
 }
 
 export default function Home() {
+  const { data: session } = useSession();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(20);
@@ -97,9 +99,15 @@ export default function Home() {
             Scrape leads, enrich, draft outreach, export — one stage at a time.
           </p>
         </div>
-        <button className="btn" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-          {theme === "dark" ? "☀ Light mode" : "🌙 Dark mode"}
-        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {session?.user?.email && <span style={{ fontSize: 13, color: "var(--muted)" }}>{session.user.email}</span>}
+          <button className="btn" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+            {theme === "dark" ? "☀ Light mode" : "🌙 Dark mode"}
+          </button>
+          <button className="btn" onClick={() => signOut({ callbackUrl: "/login" })}>
+            Sign out
+          </button>
+        </div>
       </div>
 
       <section className="card" style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>

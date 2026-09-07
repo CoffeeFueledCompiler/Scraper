@@ -2,11 +2,14 @@
 // node:crypto + fetch, since that's the whole surface area we need for one
 // auth exchange and two API calls.
 //
-// Supports two credential file shapes at GOOGLE_APPLICATION_CREDENTIALS:
+// Supports two credential shapes, and two ways to supply them:
 //  - a service account key ("type": "service_account") -> signed JWT
 //  - a gcloud ADC user credential ("type": "authorized_user") -> refresh token
-// The latter is what you get from `gcloud auth application-default login`,
-// needed when an org policy blocks service account key creation.
+//    (what `gcloud auth application-default login` produces, needed when an
+//    org policy blocks service account key creation)
+// GOOGLE_APPLICATION_CREDENTIALS_JSON holds the whole JSON inline (for
+// serverless hosts with no persistent disk to put a key file on).
+// GOOGLE_APPLICATION_CREDENTIALS holds a path to the file instead (local dev).
 import { readFileSync } from "fs";
 
 const SCOPE = "https://www.googleapis.com/auth/spreadsheets";
@@ -17,8 +20,15 @@ function base64url(input: Buffer): string {
 }
 
 function loadCredentials(): Record<string, string> {
+  const inlineJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+  if (inlineJson) return JSON.parse(inlineJson);
+
   const path = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  if (!path) throw new Error("GOOGLE_APPLICATION_CREDENTIALS is missing — set it to your credentials JSON file path.");
+  if (!path) {
+    throw new Error(
+      "Set either GOOGLE_APPLICATION_CREDENTIALS_JSON (the whole key file's contents) or GOOGLE_APPLICATION_CREDENTIALS (a path to it)."
+    );
+  }
   return JSON.parse(readFileSync(path, "utf-8"));
 }
 

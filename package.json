@@ -7,18 +7,29 @@
     "build": "next build",
     "start": "next start",
     "test": "node --test lib/**/*.test.ts",
-    "postinstall": "playwright install chromium"
+    "postinstall": "node scripts/postinstall.js"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "@sparticuz/chromium": "^149.0.0",
+    "@vercel/blob": "^2.8.0",
+    "bcryptjs": "^3.0.3",
     "next": "^15.0.0",
+    "next-auth": "^4.24.15",
+    "pg": "^8.23.0",
     "playwright": "^1.47.0",
+    "playwright-core": "^1.63.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "prisma": "^7.10.0",
     "typescript": "^5.6.0"
   }
 }

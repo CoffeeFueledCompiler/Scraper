@@ -1,7 +1,7 @@
 // Email enrichment — Stage 2. Visits each business's website looking for a
 // published email address.
-import { chromium } from "playwright";
-import type { BrowserContext } from "playwright";
+import { launchBrowser } from "./browser.ts";
+import type { BrowserContext } from "playwright-core";
 
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 const GENERIC_PREFIXES = ["info@", "contact@", "admin@", "office@", "support@"];
@@ -50,7 +50,7 @@ async function findEmailOnSite(context: BrowserContext, websiteUrl: string, time
 }
 
 export async function enrichWebsites(websites: string[], headless = true): Promise<string[]> {
-  const browser = await chromium.launch({ headless });
+  const browser = await launchBrowser(headless);
   const context = await browser.newContext();
   const emails: string[] = [];
   for (const site of websites) {

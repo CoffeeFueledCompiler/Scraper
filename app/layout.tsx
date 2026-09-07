@@ -1,3 +1,5 @@
+import Providers from "./providers";
+
 export const metadata = { title: "Lead Generator" };
 
 // Theme is plain CSS variables + a [data-theme] attribute on <html>, toggled
@@ -102,7 +104,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <style dangerouslySetInnerHTML={{ __html: themeStyle }} />
       </head>
-      <body style={{ fontFamily: "system-ui, sans-serif", margin: 0, padding: "24px" }}>{children}</body>
+      <body style={{ fontFamily: "system-ui, sans-serif", margin: 0, padding: "24px" }}>
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }
