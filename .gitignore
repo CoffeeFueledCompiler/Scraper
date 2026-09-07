@@ -1,0 +1,10 @@
+node_modules/
+.next/
+.env
+.env.local
+data/leads.json
+server001-400416-0102acd3ffbe.json
+*service-account*.json
+__pycache__/
+.venv/
+*.pyc
