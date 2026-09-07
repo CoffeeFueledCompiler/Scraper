@@ -16,7 +16,12 @@ export function guessNicheAndCityFromQuery(query: string): { niche: string; city
 
 const pause = (a = 800, b = 1800) => new Promise((r) => setTimeout(r, a + Math.random() * (b - a)));
 
-export async function scrapeGoogleMaps(query: string, limit: number, headless = true): Promise<Lead[]> {
+export async function scrapeGoogleMaps(
+  query: string,
+  limit: number,
+  headless = true,
+  excludeNames: Set<string> = new Set()
+): Promise<Lead[]> {
   const results: Lead[] = [];
   const fallback = guessNicheAndCityFromQuery(query);
 
@@ -43,8 +48,14 @@ export async function scrapeGoogleMaps(query: string, limit: number, headless = 
     console.error("scrape_maps: results feed never appeared — Google may be showing a CAPTCHA.");
   }
 
-  const seenNames = new Set<string>();
+  // Seeding with already-saved names lets a Vercel Hobby deployment (60s
+  // function cap) build up a full result set across several small, separate
+  // scrape calls instead of one call needing to finish the whole limit —
+  // each call skips past what's already collected and clicks into fresh
+  // cards instead of re-fetching the same first N results every time.
+  const seenNames = new Set(excludeNames);
   let stagnantRounds = 0;
+  let lastCardCount = 0;
 
   while (results.length < limit && stagnantRounds < 5) {
     // Match on the stable /maps/place/ URL pattern rather than a specific div
@@ -52,7 +63,6 @@ export async function scrapeGoogleMaps(query: string, limit: number, headless = 
     // that a structural selector silently matches zero cards.
     const cards = await page.locator(`${feedSelector} a[href*="/maps/place/"]`).all();
     console.error(`scrape_maps: found ${cards.length} card(s) this round, ${results.length}/${limit} collected so far`);
-    const before = results.length;
 
     for (const card of cards) {
       if (results.length >= limit) break;
@@ -107,7 +117,12 @@ export async function scrapeGoogleMaps(query: string, limit: number, headless = 
       });
     }
 
-    stagnantRounds = results.length === before ? stagnantRounds + 1 : 0;
+    // Stagnation means scrolling isn't loading more cards into the DOM at
+    // all — not "no new-to-us results this round," which can legitimately
+    // happen for several rounds in a row when excludeNames pre-seeds a lot
+    // of already-collected businesses near the top of the results.
+    stagnantRounds = cards.length === lastCardCount ? stagnantRounds + 1 : 0;
+    lastCardCount = cards.length;
 
     try {
       await page.evaluate((sel) => {
