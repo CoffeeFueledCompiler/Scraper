@@ -73,18 +73,24 @@ export async function writeSheetRows(spreadsheetId: string, sheetName: string, h
   const token = await getAccessToken();
   const authHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
-  // Clear the sheet first so a re-export doesn't leave stale trailing rows
-  // from a previous, longer run.
-  const clearRes = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}:clear`,
-    { method: "POST", headers: authHeaders, body: "{}" }
+  // Check whether the sheet already has a header row, so we know whether to
+  // write one and so the append call has a non-empty anchor range to search
+  // from for the first empty row.
+  const checkRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`${sheetName}!A1`)}`,
+    { headers: authHeaders }
   );
-  if (!clearRes.ok) throw new Error(`Sheets clear failed ${clearRes.status}: ${await clearRes.text()}`);
+  if (!checkRes.ok) throw new Error(`Sheets read failed ${checkRes.status}: ${await checkRes.text()}`);
+  const hasHeader = !!(await checkRes.json()).values;
 
-  const range = `${sheetName}!A1`;
-  const updateRes = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
-    { method: "PUT", headers: authHeaders, body: JSON.stringify({ values: [header, ...rows] }) }
+  const values = hasHeader ? rows : [header, ...rows];
+
+  // Append instead of overwrite: the Sheets API finds the last row of
+  // existing data in the range and inserts new rows after it, so previous
+  // exports are preserved and new rows land on the first empty row.
+  const appendRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`${sheetName}!A1`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+    { method: "POST", headers: authHeaders, body: JSON.stringify({ values }) }
   );
-  if (!updateRes.ok) throw new Error(`Sheets update failed ${updateRes.status}: ${await updateRes.text()}`);
+  if (!appendRes.ok) throw new Error(`Sheets append failed ${appendRes.status}: ${await appendRes.text()}`);
 }

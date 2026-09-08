@@ -2,29 +2,9 @@ import Providers from "./providers";
 
 export const metadata = { title: "Lead Generator" };
 
-// Theme is plain CSS variables + a [data-theme] attribute on <html>, toggled
-// and persisted to localStorage from page.tsx. No CSS framework needed for
-// a small, consistent visual system across light/dark.
+// Theme is plain CSS variables on :root. Dark only, no toggle needed.
 const themeStyle = `
   :root {
-    --bg: #f6f5fa;
-    --fg: #16171a;
-    --muted: #6b7280;
-    --card: #ffffff;
-    --border: #e3e0ec;
-    --border-soft: #eeecf5;
-    --accent: #7c3aed;
-    --accent-fg: #ffffff;
-    --gold: #f5a524;
-    --danger: #dc2626;
-    --danger-soft: #fee2e2;
-    --success: #16a34a;
-    --success-soft: #dcfce7;
-    --warn: #b45309;
-    --warn-soft: #fef3c7;
-    --shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 14px rgba(0,0,0,.04);
-  }
-  :root[data-theme="dark"] {
     --bg: #0a0a0d;
     --fg: #f1eef7;
     --muted: #a099b3;

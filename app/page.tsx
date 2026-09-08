@@ -50,22 +50,12 @@ export default function Home() {
   const [batchSize, setBatchSize] = useState(10);
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState("");
-  const [theme, setTheme] = useState<"light" | "dark">("light");
 
   const refresh = () => fetch("/api/leads").then((r) => r.json()).then(setLeads);
 
   useEffect(() => {
     refresh();
-    const saved = localStorage.getItem("theme");
-    const initial =
-      saved === "dark" || saved === "light" ? saved : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    setTheme(initial as "light" | "dark");
   }, []);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("theme", theme);
-  }, [theme]);
 
   const run = async (label: string, url: string, body: unknown) => {
     setBusy(label);
@@ -101,9 +91,6 @@ export default function Home() {
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {session?.user?.email && <span style={{ fontSize: 13, color: "var(--muted)" }}>{session.user.email}</span>}
-          <button className="btn" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-            {theme === "dark" ? "☀ Light mode" : "🌙 Dark mode"}
-          </button>
           <button className="btn" onClick={() => signOut({ callbackUrl: "/login" })}>
             Sign out
           </button>
