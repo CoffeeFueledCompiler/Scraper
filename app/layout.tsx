@@ -7,14 +7,15 @@ export const metadata = { title: "Lead Generator" };
 // a small, consistent visual system across light/dark.
 const themeStyle = `
   :root {
-    --bg: #f6f7f9;
+    --bg: #f6f5fa;
     --fg: #16171a;
     --muted: #6b7280;
     --card: #ffffff;
-    --border: #e3e5e8;
-    --border-soft: #eef0f2;
-    --accent: #4f46e5;
+    --border: #e3e0ec;
+    --border-soft: #eeecf5;
+    --accent: #7c3aed;
     --accent-fg: #ffffff;
+    --gold: #f5a524;
     --danger: #dc2626;
     --danger-soft: #fee2e2;
     --success: #16a34a;
@@ -24,14 +25,15 @@ const themeStyle = `
     --shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 14px rgba(0,0,0,.04);
   }
   :root[data-theme="dark"] {
-    --bg: #111214;
-    --fg: #e9e9ea;
-    --muted: #9aa0a6;
-    --card: #1b1c1f;
-    --border: #2b2d31;
-    --border-soft: #212226;
-    --accent: #818cf8;
+    --bg: #0a0a0d;
+    --fg: #f1eef7;
+    --muted: #a099b3;
+    --card: #16141f;
+    --border: #2e2840;
+    --border-soft: #1f1a2b;
+    --accent: #8b5cf6;
     --accent-fg: #14142b;
+    --gold: #f5a524;
     --danger: #f87171;
     --danger-soft: #3b1418;
     --success: #4ade80;
@@ -43,7 +45,7 @@ const themeStyle = `
 
   * { box-sizing: border-box; }
   body { background: var(--bg); color: var(--fg); }
-  a { color: var(--accent); }
+  a { color: var(--gold); }
 
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); }
 
@@ -90,7 +92,7 @@ const themeStyle = `
   tbody tr:hover { background: var(--border-soft); }
 
   .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
-  .badge-ok { background: var(--success-soft); color: var(--success); }
+  .badge-ok { background: rgba(245,165,36,.15); color: var(--gold); }
   .badge-review { background: var(--warn-soft); color: var(--warn); }
   .badge-pending { background: var(--border-soft); color: var(--muted); }
 

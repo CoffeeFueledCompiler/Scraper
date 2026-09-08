@@ -17,10 +17,13 @@ export async function POST(req: Request) {
   // large limit and building it up across several clicks is the workaround.
   const alreadyKnown = new Set((await readLeads()).map((l) => l.name));
 
-  // headless: false — this runs on the user's own machine, so a visible
-  // browser window lets them solve a CAPTCHA manually if Google shows one.
-  // (On Vercel this is forced to true regardless — see lib/browser.ts.)
-  const scraped = await scrapeGoogleMaps(query, limit ?? 20, false, alreadyKnown);
+  // Only run non-headless in local dev, where there's a real display to
+  // solve a CAPTCHA on by hand. Any deployed host (Render, Vercel, ...) has
+  // no display — headless:false there just crashes trying to open a window.
+  // (Vercel forces headless regardless — see lib/browser.ts — but Render and
+  // other persistent-server hosts go through the same "headless" flag here.)
+  const headless = process.env.NODE_ENV === "production";
+  const scraped = await scrapeGoogleMaps(query, limit ?? 20, headless, alreadyKnown);
   const leads = await upsertLeads(scraped);
   return NextResponse.json({ scraped: scraped.length, leads });
 }
