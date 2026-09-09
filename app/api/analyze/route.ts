@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { AIClient } from "@/lib/aiClient";
 import { ANALYZE_SYSTEM_PROMPT, analyzeUserPrompt, NO_WEBSITE_OBSERVATION } from "@/lib/prompts";
 import { readLeads, upsertLeads } from "@/lib/store";
-import { Lead } from "@/lib/schema";
+import { Lead, leadKey } from "@/lib/schema";
 import { fetchWebsiteText } from "@/lib/webtext";
 
 export const runtime = "nodejs";
@@ -34,10 +34,13 @@ async function analyzeLead(client: AIClient, lead: Lead): Promise<Lead> {
 }
 
 export async function POST(req: Request) {
-  const { batchSize } = await req.json().catch(() => ({ batchSize: 10 }));
+  const { batchSize, keys } = await req.json().catch(() => ({ batchSize: 10 }));
 
   const leads = await readLeads();
-  const fullTodo = leads.filter((l) => !l.observation);
+  // `keys` scopes this run to a specific scrape batch (see /api/scrape's
+  // scrapedKeys) instead of sweeping in every unanalyzed lead ever saved.
+  const scoped = Array.isArray(keys) ? leads.filter((l) => keys.includes(leadKey(l))) : leads;
+  const fullTodo = scoped.filter((l) => !l.observation);
   const batch = fullTodo.slice(0, batchSize ?? 10);
 
   const nCalls = batch.filter((l) => l.website).length;

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { scrapeGoogleMaps } from "@/lib/scrapeMaps";
 import { readLeads, upsertLeads } from "@/lib/store";
+import { leadKey } from "@/lib/schema";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -25,5 +26,8 @@ export async function POST(req: Request) {
   const headless = process.env.NODE_ENV === "production";
   const scraped = await scrapeGoogleMaps(query, limit ?? 20, headless, alreadyKnown);
   const leads = await upsertLeads(scraped);
-  return NextResponse.json({ scraped: scraped.length, leads });
+  // The exact set of leads this call scraped, so the pipeline's later stages
+  // can be scoped to just this run instead of sweeping in the whole backlog.
+  const scrapedKeys = scraped.map(leadKey);
+  return NextResponse.json({ scraped: scraped.length, scrapedKeys, leads });
 }

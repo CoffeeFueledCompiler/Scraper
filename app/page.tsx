@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSession, signOut } from "next-auth/react";
-import { Lead } from "@/lib/schema";
+import { Lead, leadKey } from "@/lib/schema";
 
 async function postJSON(url: string, body: unknown) {
   const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -78,6 +78,9 @@ export default function Home() {
   const [status, setStatus] = useState("");
   const [pipelineStep, setPipelineStep] = useState<number | null>(null);
   const [pipelineError, setPipelineError] = useState<string | null>(null);
+  // Keys (name::city) of the leads this pipeline run scraped — scopes
+  // Enrich/Analyze/Generate to just this batch instead of the whole backlog.
+  const [sessionKeys, setSessionKeys] = useState<string[]>([]);
 
   const refresh = () => fetch("/api/leads").then((r) => r.json()).then(setLeads);
 
@@ -102,7 +105,8 @@ export default function Home() {
   const runPipeline = async () => {
     setBusy("pipeline");
     setPipelineError(null);
-    const bodies: Record<string, unknown> = {
+    setSessionKeys([]);
+    const bodies: Record<string, any> = {
       scrape: { query, limit },
       enrich: { limit: batchSize },
       analyze: { batchSize },
@@ -118,6 +122,14 @@ export default function Home() {
           const result = await postJSON(`/api/${key}`, bodies[key]);
           if (result.error) throw new Error(result.error);
           if (result.leads) setLeads(result.leads);
+          if (key === "scrape" && Array.isArray(result.scrapedKeys)) {
+            // Scope every later stage to exactly what this run scraped,
+            // instead of every un-processed lead ever saved to the table.
+            setSessionKeys(result.scrapedKeys);
+            bodies.enrich.keys = result.scrapedKeys;
+            bodies.analyze.keys = result.scrapedKeys;
+            bodies["generate-email"].keys = result.scrapedKeys;
+          }
           remaining = batchedSteps.has(key) ? (result.remaining ?? 0) : 0;
         }
       } catch (err) {
@@ -148,8 +160,8 @@ export default function Home() {
           stepIndex={pipelineStep}
           error={pipelineError}
           progress={
-            PIPELINE_STEPS[pipelineStep]?.key === "enrich"
-              ? `${leads.filter((l) => l.email).length}/${leads.length} emails found`
+            PIPELINE_STEPS[pipelineStep]?.key === "enrich" && sessionKeys.length > 0
+              ? `${leads.filter((l) => sessionKeys.includes(leadKey(l)) && l.email).length}/${sessionKeys.length} emails found`
               : null
           }
           onDismiss={() => setPipelineStep(null)}

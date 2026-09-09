@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { AIClient } from "@/lib/aiClient";
 import { GENERATE_EMAIL_SYSTEM_PROMPT, generateEmailUserPrompt } from "@/lib/prompts";
 import { readLeads, upsertLeads } from "@/lib/store";
-import { Lead } from "@/lib/schema";
+import { Lead, leadKey } from "@/lib/schema";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -30,10 +30,13 @@ async function generateForLead(client: AIClient, lead: Lead): Promise<Lead> {
 }
 
 export async function POST(req: Request) {
-  const { batchSize } = await req.json().catch(() => ({ batchSize: 10 }));
+  const { batchSize, keys } = await req.json().catch(() => ({ batchSize: 10 }));
 
   const leads = await readLeads();
-  const fullTodo = leads.filter((l) => l.observation && !l.subject);
+  // `keys` scopes this run to a specific scrape batch (see /api/scrape's
+  // scrapedKeys) instead of sweeping in every un-drafted lead ever saved.
+  const scoped = Array.isArray(keys) ? leads.filter((l) => keys.includes(leadKey(l))) : leads;
+  const fullTodo = scoped.filter((l) => l.observation && !l.subject);
   const batch = fullTodo.slice(0, batchSize ?? 10);
 
   const client = new AIClient();
