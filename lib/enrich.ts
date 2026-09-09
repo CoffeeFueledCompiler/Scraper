@@ -49,12 +49,21 @@ async function findEmailOnSite(context: BrowserContext, websiteUrl: string, time
   return pickBestEmail(found);
 }
 
+// ponytail: fixed concurrency of 4, not tuned/configurable — good enough to
+// cut wall time ~4x on a single shared browser context without risking
+// overwhelming a single site's server. Revisit if batches grow much larger.
+const CONCURRENCY = 4;
+
 export async function enrichWebsites(websites: string[], headless = true): Promise<string[]> {
   const browser = await launchBrowser(headless);
   const context = await browser.newContext();
-  const emails: string[] = [];
-  for (const site of websites) {
-    emails.push(await findEmailOnSite(context, site));
+  const emails: string[] = new Array(websites.length);
+  for (let i = 0; i < websites.length; i += CONCURRENCY) {
+    const chunk = websites.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(chunk.map((site) => findEmailOnSite(context, site)));
+    results.forEach((email, j) => {
+      emails[i + j] = email;
+    });
     await pause();
   }
   await browser.close();

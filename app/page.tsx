@@ -25,10 +25,12 @@ const PIPELINE_STEPS = [
 function PipelineOverlay({
   stepIndex,
   error,
+  progress,
   onDismiss,
 }: {
   stepIndex: number;
   error: string | null;
+  progress: string | null;
   onDismiss: () => void;
 }) {
   return (
@@ -52,7 +54,9 @@ function PipelineOverlay({
           ))}
         </div>
         <p className="pipeline-status">
-          {error ? `Failed at "${PIPELINE_STEPS[stepIndex]?.label}": ${error}` : `Running "${PIPELINE_STEPS[stepIndex]?.label}"...`}
+          {error
+            ? `Failed at "${PIPELINE_STEPS[stepIndex]?.label}": ${error}`
+            : `Running "${PIPELINE_STEPS[stepIndex]?.label}"...${progress ? ` (${progress})` : ""}`}
         </p>
         {error && (
           <button className="btn" onClick={onDismiss} style={{ alignSelf: "center" }}>
@@ -140,7 +144,16 @@ export default function Home() {
   return (
     <main style={{ maxWidth: 1180, margin: "0 auto", display: "flex", flexDirection: "column", gap: 20 }}>
       {pipelineStep !== null && (
-        <PipelineOverlay stepIndex={pipelineStep} error={pipelineError} onDismiss={() => setPipelineStep(null)} />
+        <PipelineOverlay
+          stepIndex={pipelineStep}
+          error={pipelineError}
+          progress={
+            PIPELINE_STEPS[pipelineStep]?.key === "enrich"
+              ? `${leads.filter((l) => l.email).length}/${leads.length} emails found`
+              : null
+          }
+          onDismiss={() => setPipelineStep(null)}
+        />
       )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
