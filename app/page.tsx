@@ -100,11 +100,11 @@ export default function Home() {
     setPipelineError(null);
     const bodies: Record<string, unknown> = {
       scrape: { query, limit },
-      enrich: {},
+      enrich: { limit: batchSize },
       analyze: { batchSize },
       "generate-email": { batchSize },
     };
-    const batchedSteps = new Set(["analyze", "generate-email"]);
+    const batchedSteps = new Set(["enrich", "analyze", "generate-email"]);
     for (let i = 0; i < PIPELINE_STEPS.length; i++) {
       setPipelineStep(i);
       const { key, label } = PIPELINE_STEPS[i];
