@@ -23,7 +23,12 @@ export async function POST() {
     console.log(`Missing Email Address for: ${l.name}`);
   }
 
-  await writeSheetRows(spreadsheetId, sheetName, header, rows);
+  try {
+    await writeSheetRows(spreadsheetId, sheetName, header, rows);
+  } catch (err) {
+    console.error(`export-sheets failed: ${err instanceof Error ? err.message : String(err)}`);
+    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+  }
 
   return NextResponse.json({
     exported: rows.length,

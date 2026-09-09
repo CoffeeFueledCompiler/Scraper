@@ -73,10 +73,16 @@ export async function scrapeGoogleMaps(
 
       try {
         await card.click();
-        await pause(1000, 2000);
+        // Wait for the details panel heading to actually switch to this
+        // business before reading its fields — a fixed pause isn't enough
+        // when Google is slow to re-render, and scraping too early reads
+        // the *previous* card's still-visible phone/website/address.
+        await page.locator("h1.DUwDvf").filter({ hasText: name }).first().waitFor({ timeout: 8000 });
       } catch {
-        continue;
+        // fall through and try to scrape anyway — better than skipping
+        // the business entirely, though fields may end up blank/stale
       }
+      await pause(400, 900);
 
       let phone = "";
       let website = "";
