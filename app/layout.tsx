@@ -78,6 +78,31 @@ const themeStyle = `
 
   .empty-state { padding: 56px 20px; text-align: center; color: var(--muted); }
   .truncate { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .pipeline-overlay {
+    position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+    background: rgba(10,10,13,.55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+  .pipeline-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow);
+    padding: 32px 40px; display: flex; flex-direction: column; align-items: center; gap: 20px; min-width: 380px;
+  }
+  .pipeline-steps { display: flex; align-items: flex-start; }
+  .pipeline-step-wrap { display: flex; align-items: center; }
+  .pipeline-step { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .pipeline-circle {
+    width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; background: var(--border-soft); color: var(--muted); border: 2px solid var(--border);
+    transition: background .2s, border-color .2s, color .2s;
+  }
+  .pipeline-circle.is-active { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  .pipeline-circle.is-done { background: var(--success-soft); border-color: var(--success); color: var(--success); }
+  .pipeline-circle.is-error { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+  .pipeline-circle .spinner { border-color: var(--accent-fg); border-right-color: transparent; }
+  .pipeline-label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .pipeline-line { width: 48px; height: 2px; background: var(--border); margin: 0 4px 22px; transition: background .2s; }
+  .pipeline-line.is-done { background: var(--success); }
+  .pipeline-status { margin: 0; font-size: 13px; color: var(--muted); text-align: center; }
 `;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

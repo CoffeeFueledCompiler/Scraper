@@ -15,30 +15,52 @@ function StatusBadge({ status }: { status: Lead["status"] }) {
   return <span className="badge badge-pending">pending</span>;
 }
 
-function StepButton({
-  n,
-  label,
-  onClick,
-  busy,
-  active,
-  variant = "default",
+const PIPELINE_STEPS = [
+  { key: "scrape", label: "Scrape" },
+  { key: "enrich", label: "Emails" },
+  { key: "analyze", label: "Analyze" },
+  { key: "generate-email", label: "Generate" },
+];
+
+function PipelineOverlay({
+  stepIndex,
+  error,
+  onDismiss,
 }: {
-  n: number;
-  label: string;
-  onClick: () => void;
-  busy: boolean;
-  active: boolean;
-  variant?: "default" | "primary";
+  stepIndex: number;
+  error: string | null;
+  onDismiss: () => void;
 }) {
   return (
-    <button
-      className={`btn${variant === "primary" ? " btn-primary" : ""}`}
-      disabled={busy}
-      onClick={onClick}
-    >
-      {active ? <span className="spinner" /> : <span className="step-num">{n}</span>}
-      {label}
-    </button>
+    <div className="pipeline-overlay">
+      <div className="pipeline-card">
+        <div className="pipeline-steps">
+          {PIPELINE_STEPS.map((s, i) => (
+            <div key={s.key} className="pipeline-step-wrap">
+              <div className="pipeline-step">
+                <div
+                  className={`pipeline-circle${
+                    error && i === stepIndex ? " is-error" : i < stepIndex ? " is-done" : i === stepIndex ? " is-active" : ""
+                  }`}
+                >
+                  {error && i === stepIndex ? "!" : i < stepIndex ? "✓" : i === stepIndex ? <span className="spinner" /> : i + 1}
+                </div>
+                <span className="pipeline-label">{s.label}</span>
+              </div>
+              {i < PIPELINE_STEPS.length - 1 && <div className={`pipeline-line${i < stepIndex ? " is-done" : ""}`} />}
+            </div>
+          ))}
+        </div>
+        <p className="pipeline-status">
+          {error ? `Failed at "${PIPELINE_STEPS[stepIndex]?.label}": ${error}` : `Running "${PIPELINE_STEPS[stepIndex]?.label}"...`}
+        </p>
+        {error && (
+          <button className="btn" onClick={onDismiss} style={{ alignSelf: "center" }}>
+            Dismiss
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -50,6 +72,8 @@ export default function Home() {
   const [batchSize, setBatchSize] = useState(10);
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState("");
+  const [pipelineStep, setPipelineStep] = useState<number | null>(null);
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
 
   const refresh = () => fetch("/api/leads").then((r) => r.json()).then(setLeads);
 
@@ -71,6 +95,34 @@ export default function Home() {
     }
   };
 
+  const runPipeline = async () => {
+    setBusy("pipeline");
+    setPipelineError(null);
+    const bodies: Record<string, unknown> = {
+      scrape: { query, limit },
+      enrich: {},
+      analyze: { batchSize },
+      "generate-email": { batchSize },
+    };
+    for (let i = 0; i < PIPELINE_STEPS.length; i++) {
+      setPipelineStep(i);
+      const { key, label } = PIPELINE_STEPS[i];
+      try {
+        const result = await postJSON(`/api/${key}`, bodies[key]);
+        if (result.error) throw new Error(result.error);
+        if (result.leads) setLeads(result.leads);
+      } catch (err) {
+        setPipelineError(err instanceof Error ? err.message : String(err));
+        setStatus(`Pipeline failed at "${label}": ${err instanceof Error ? err.message : String(err)}`);
+        setBusy(null);
+        return;
+      }
+    }
+    setStatus("Pipeline complete: scraped, enriched, analyzed, and drafted emails for all leads.");
+    setPipelineStep(null);
+    setBusy(null);
+  };
+
   const clearData = async () => {
     if (!confirm("Clear all scraped/enriched/analyzed leads? This can't be undone.")) return;
     setBusy("clear");
@@ -82,6 +134,9 @@ export default function Home() {
 
   return (
     <main style={{ maxWidth: 1180, margin: "0 auto", display: "flex", flexDirection: "column", gap: 20 }}>
+      {pipelineStep !== null && (
+        <PipelineOverlay stepIndex={pipelineStep} error={pipelineError} onDismiss={() => setPipelineStep(null)} />
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 22 }}>The Clientist Outreach Generator</h1>
@@ -114,16 +169,17 @@ export default function Home() {
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <StepButton n={1} label="Scrape Google Maps" busy={!!busy} active={busy === "scrape"} onClick={() => run("scrape", "/api/scrape", { query, limit })} />
-          <StepButton n={2} label="Find emails" busy={!!busy} active={busy === "enrich"} onClick={() => run("enrich", "/api/enrich", {})} />
-          <StepButton n={3} label="Generate observation/impact/solution" busy={!!busy} active={busy === "analyze"} onClick={() => run("analyze", "/api/analyze", { batchSize })} />
-          <StepButton n={4} label="Generate subject/email" busy={!!busy} active={busy === "generate-email"} onClick={() => run("generate-email", "/api/generate-email", { batchSize })} />
+          <button className="btn btn-primary" disabled={!!busy} onClick={runPipeline}>
+            {busy === "pipeline" ? <span className="spinner" /> : null} Scrape → Emails → Analyze → Generate
+          </button>
           <a href="/api/export">
-            <button className="btn btn-primary" disabled={!!busy}>
-              <span className="step-num">5</span>Export final CSV
+            <button className="btn" disabled={!!busy}>
+              Export final CSV
             </button>
           </a>
-          <StepButton n={6} label="Export to Google Sheet" busy={!!busy} active={busy === "export-sheets"} onClick={() => run("export-sheets", "/api/export-sheets", {})} />
+          <button className="btn" disabled={!!busy} onClick={() => run("export-sheets", "/api/export-sheets", {})}>
+            {busy === "export-sheets" ? <span className="spinner" /> : null} Export to Google Sheet
+          </button>
           <button className="btn btn-danger" disabled={!!busy} onClick={clearData} style={{ marginLeft: "auto" }}>
             Clear local data
           </button>
