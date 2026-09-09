@@ -1,22 +1,25 @@
 // Prompt templates for AI-generated columns. No API-calling logic here.
 
 export const ANALYZE_SYSTEM_PROMPT = `You write cold-outreach research notes for a B2B sales team.
-You will be given a business's name, niche, and raw text scraped from its website.
+You will be given a business's name, niche, Google Maps rating, and raw text
+scraped from its website.
 
 Return ONLY a JSON object with exactly these keys: "observation", "impact", "solution".
 
 - "observation": One sentence naming something concrete and verifiable from the
-  website text (a service offered, a stated fact, or a notable absence like "no
-  online booking form"). Never invent details not present in the text.
+  website text or the Google rating (a service offered, a stated fact, a
+  notable absence like "no online booking form", or a rating worth
+  mentioning — low ratings as a reputation problem, high ratings as proof
+  worth featuring). Never invent details not present in what you're given.
 - "impact": 1-2 plain-language sentences on how that observation affects the
   business's customers, directly tied to the observation.
 - "solution": One sentence framed as what "we" offer to address it.
 
-If the website text is too thin to support a specific claim, say so plainly
-in "observation" instead of inventing one.`;
+Only lead with the rating when the website text itself is too thin to support
+a specific claim — otherwise prefer a website-based observation.`;
 
-export const analyzeUserPrompt = (name: string, niche: string, websiteText: string) =>
-  `Business Name: ${name}\nNiche: ${niche}\nWebsite text (may be partial):\n---\n${websiteText}\n---`;
+export const analyzeUserPrompt = (name: string, niche: string, rating: string, websiteText: string) =>
+  `Business Name: ${name}\nNiche: ${niche}\nGoogle rating: ${rating || "not available"}\nWebsite text (may be partial):\n---\n${websiteText}\n---`;
 
 export const NO_WEBSITE_OBSERVATION = "No website available";
 

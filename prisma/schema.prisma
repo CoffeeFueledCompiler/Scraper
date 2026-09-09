@@ -34,6 +34,7 @@ model Lead {
   website        String   @default("")
   city           String   @default("")
   niche          String   @default("")
+  rating         String   @default("")
   email          String   @default("")
   observation    String   @default("")
   impact         String   @default("")

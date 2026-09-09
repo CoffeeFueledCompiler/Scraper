@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS "ScrapeLead" (
   "website"        TEXT NOT NULL DEFAULT '',
   "city"           TEXT NOT NULL DEFAULT '',
   "niche"          TEXT NOT NULL DEFAULT '',
+  "rating"         TEXT NOT NULL DEFAULT '',
   "email"          TEXT NOT NULL DEFAULT '',
   "observation"    TEXT NOT NULL DEFAULT '',
   "impact"         TEXT NOT NULL DEFAULT '',

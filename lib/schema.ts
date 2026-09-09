@@ -5,6 +5,7 @@ export type Lead = {
   website: string;
   city: string;
   niche: string;
+  rating: string;
   email: string;
   observation: string;
   impact: string;
@@ -20,6 +21,7 @@ export const emptyLead = (): Lead => ({
   website: "",
   city: "",
   niche: "",
+  rating: "",
   email: "",
   observation: "",
   impact: "",
@@ -37,6 +39,7 @@ export const FINAL_COLUMNS: { header: string; field: keyof Lead }[] = [
   { header: "Email Address", field: "email" },
   { header: "City", field: "city" },
   { header: "Niche", field: "niche" },
+  { header: "Average Review", field: "rating" },
   { header: "Specific Observation", field: "observation" },
   { header: "Customer Impact", field: "impact" },
   { header: "Recommended Solution", field: "solution" },

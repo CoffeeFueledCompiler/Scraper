@@ -88,6 +88,7 @@ export async function scrapeGoogleMaps(
       let website = "";
       let address = "";
       let category = "";
+      let rating = "";
 
       try {
         const phoneEl = page.locator('button[data-item-id^="phone:"]').first();
@@ -113,10 +114,23 @@ export async function scrapeGoogleMaps(
         if ((await categoryEl.count()) > 0) category = (await categoryEl.innerText()).trim();
       } catch {}
 
+      try {
+        // The star-rating icon's aria-label carries both figures, e.g.
+        // "4.6 stars 191 Reviews" — parse it down to "4.6 (191)" and fall
+        // back to the raw label if Google's wording ever shifts.
+        const ratingEl = page.locator('span[role="img"][aria-label*="star"]').first();
+        if ((await ratingEl.count()) > 0) {
+          const label = ((await ratingEl.getAttribute("aria-label")) || "").trim();
+          const match = label.match(/^([\d.]+)\s*stars?\s+([\d,]+)\s*Reviews?/i);
+          rating = match ? `${match[1]} (${match[2]})` : label;
+        }
+      } catch {}
+
       results.push({
         ...emptyLead(),
         name,
         phone,
+        rating,
         website,
         city: address || fallback.city,
         niche: category || fallback.niche,

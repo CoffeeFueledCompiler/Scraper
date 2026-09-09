@@ -16,7 +16,7 @@ async function analyzeLead(client: AIClient, lead: Lead): Promise<Lead> {
     return { ...lead, observation: NO_WEBSITE_OBSERVATION, impact: "", solution: "", status: "ok" };
   }
 
-  const userPrompt = analyzeUserPrompt(lead.name, lead.niche, websiteText);
+  const userPrompt = analyzeUserPrompt(lead.name, lead.niche, lead.rating, websiteText);
   const requiredKeys = ["observation", "impact", "solution"];
   let data = await client.generateJson<{ observation: string; impact: string; solution: string }>(
     ANALYZE_SYSTEM_PROMPT,

@@ -204,7 +204,7 @@ export default function Home() {
           <table>
             <thead>
               <tr>
-                {["Name", "Phone", "Website", "City", "Niche", "Email", "Observation", "Subject", "Status"].map((h) => (
+                {["Name", "Phone", "Website", "City", "Niche", "Rating", "Email", "Observation", "Subject", "Status"].map((h) => (
                   <th key={h}>{h}</th>
                 ))}
               </tr>
@@ -223,6 +223,7 @@ export default function Home() {
                   </td>
                   <td>{l.city}</td>
                   <td>{l.niche}</td>
+                  <td>{l.rating}</td>
                   <td>{l.email}</td>
                   <td className="truncate" style={{ maxWidth: 280 }}>
                     {l.observation}
