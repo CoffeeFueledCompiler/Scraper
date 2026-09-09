@@ -104,13 +104,18 @@ export default function Home() {
       analyze: { batchSize },
       "generate-email": { batchSize },
     };
+    const batchedSteps = new Set(["analyze", "generate-email"]);
     for (let i = 0; i < PIPELINE_STEPS.length; i++) {
       setPipelineStep(i);
       const { key, label } = PIPELINE_STEPS[i];
       try {
-        const result = await postJSON(`/api/${key}`, bodies[key]);
-        if (result.error) throw new Error(result.error);
-        if (result.leads) setLeads(result.leads);
+        let remaining = 1;
+        while (remaining > 0) {
+          const result = await postJSON(`/api/${key}`, bodies[key]);
+          if (result.error) throw new Error(result.error);
+          if (result.leads) setLeads(result.leads);
+          remaining = batchedSteps.has(key) ? (result.remaining ?? 0) : 0;
+        }
       } catch (err) {
         setPipelineError(err instanceof Error ? err.message : String(err));
         setStatus(`Pipeline failed at "${label}": ${err instanceof Error ? err.message : String(err)}`);
