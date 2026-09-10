@@ -1,8 +1,8 @@
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
+COPY . .
 RUN npm ci
 
 # npm ci's postinstall (scripts/postinstall.js) already ran `prisma generate`
@@ -12,7 +12,6 @@ RUN npm ci
 # runtime has no apt access to add.
 RUN npx playwright install-deps chromium
 
-COPY . .
 RUN npm run build
 
 ENV NODE_ENV=production
