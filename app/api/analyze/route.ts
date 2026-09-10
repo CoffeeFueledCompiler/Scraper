@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { AIClient } from "@/lib/aiClient";
-import { ANALYZE_SYSTEM_PROMPT, analyzeUserPrompt, NO_WEBSITE_OBSERVATION } from "@/lib/prompts";
+import { ANALYZE_SYSTEM_PROMPT, analyzeUserPrompt, noWebsiteUserPrompt } from "@/lib/prompts";
 import { readLeads, upsertLeads } from "@/lib/store";
 import { Lead, leadKey } from "@/lib/schema";
 import { fetchWebsiteText } from "@/lib/webtext";
@@ -16,11 +16,13 @@ const COST_WARNING_THRESHOLD = 50;
 
 async function analyzeLead(client: AIClient, lead: Lead): Promise<Lead> {
   const websiteText = await fetchWebsiteText(lead.website);
-  if (!websiteText) {
-    return { ...lead, observation: NO_WEBSITE_OBSERVATION, impact: "", solution: "", status: "ok" };
-  }
-
-  const userPrompt = analyzeUserPrompt(lead.name, lead.niche, lead.rating, websiteText);
+  // No website is this app's highest-value lead type (a Tier 1 "missing
+  // revenue path" by definition) — still runs through the AI, just off
+  // Google profile fields instead of website text, so it gets a real
+  // observation/impact/solution instead of a blank placeholder.
+  const userPrompt = websiteText
+    ? analyzeUserPrompt(lead.name, lead.niche, lead.rating, websiteText)
+    : noWebsiteUserPrompt(lead.name, lead.niche, lead.city, lead.rating, lead.phone);
   const requiredKeys = ["observation", "impact", "solution"];
   let data = await client.generateJson<{ observation: string; impact: string; solution: string }>(
     ANALYZE_SYSTEM_PROMPT,
@@ -47,7 +49,8 @@ export async function POST(req: Request) {
   const fullTodo = scoped.filter((l) => !l.observation);
   const batch = fullTodo.slice(0, batchSize ?? 10);
 
-  const nCalls = batch.filter((l) => l.website).length;
+  // Every lead now makes an AI call, website or not (see analyzeLead).
+  const nCalls = batch.length;
   const warning = nCalls > COST_WARNING_THRESHOLD ? `This run makes ~${nCalls} AI calls.` : null;
 
   const client = new AIClient();
