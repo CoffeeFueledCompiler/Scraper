@@ -16,12 +16,26 @@ export function guessNicheAndCityFromQuery(query: string): { niche: string; city
 
 const pause = (a = 800, b = 1800) => new Promise((r) => setTimeout(r, a + Math.random() * (b - a)));
 
+// Vercel Hobby hard-kills a function at 60s no matter what maxDuration says.
+// Each business can take ~30s to scrape (Google's detail panel is slow), so
+// a `limit` of even 5-10 can't safely fit one call — this budgets the
+// scraping loop itself so it always returns well before that wall, instead
+// of relying on the platform to kill it mid-work.
+const DEFAULT_BUDGET_MS = 40_000;
+
 export async function scrapeGoogleMaps(
   query: string,
   limit: number,
   headless = true,
-  excludeNames: Set<string> = new Set()
-): Promise<Lead[]> {
+  excludeNames: Set<string> = new Set(),
+  // Persisting each business as it's found (see below) means a mid-run stop
+  // — whether from the time budget or a platform kill — loses at most the
+  // one business in flight; the next call picks up from there via excludeNames.
+  onLead?: (lead: Lead) => Promise<void>,
+  budgetMs: number = DEFAULT_BUDGET_MS
+): Promise<{ leads: Lead[]; exhausted: boolean }> {
+  const startedAt = Date.now();
+  const withinBudget = () => Date.now() - startedAt < budgetMs;
   const results: Lead[] = [];
   const fallback = guessNicheAndCityFromQuery(query);
 
@@ -57,7 +71,7 @@ export async function scrapeGoogleMaps(
   let stagnantRounds = 0;
   let lastCardCount = 0;
 
-  while (results.length < limit && stagnantRounds < 5) {
+  while (results.length < limit && stagnantRounds < 5 && withinBudget()) {
     // Match on the stable /maps/place/ URL pattern rather than a specific div
     // nesting depth or class name — Google reshuffles those often enough
     // that a structural selector silently matches zero cards.
@@ -66,6 +80,7 @@ export async function scrapeGoogleMaps(
 
     for (const card of cards) {
       if (results.length >= limit) break;
+      if (!withinBudget()) break; // out of time this call — return what we have, resume next call
       const name = await card.getAttribute("aria-label").catch(() => null);
       if (!name) continue; // card had no aria-label — likely a photo/thumbnail link, not the name link
       if (seenNames.has(name)) continue;
@@ -126,7 +141,7 @@ export async function scrapeGoogleMaps(
         }
       } catch {}
 
-      results.push({
+      const lead: Lead = {
         ...emptyLead(),
         name,
         phone,
@@ -134,7 +149,9 @@ export async function scrapeGoogleMaps(
         website,
         city: address || fallback.city,
         niche: category || fallback.niche,
-      });
+      };
+      results.push(lead);
+      if (onLead) await onLead(lead);
     }
 
     // Stagnation means scrolling isn't loading more cards into the DOM at
@@ -153,6 +170,11 @@ export async function scrapeGoogleMaps(
     await pause(1200, 2200);
   }
 
+  // Only treat it as "no more results exist" when scrolling genuinely
+  // stopped loading new cards — not when we simply ran out of time budget,
+  // which just means resume on the next call.
+  const exhausted = stagnantRounds >= 5;
+
   await browser.close();
-  return results.slice(0, limit);
+  return { leads: results.slice(0, limit), exhausted };
 }

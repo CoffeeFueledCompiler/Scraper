@@ -112,7 +112,11 @@ export default function Home() {
       analyze: { batchSize },
       "generate-email": { batchSize },
     };
-    const batchedSteps = new Set(["enrich", "analyze", "generate-email"]);
+    // Scrape is batched too now — Vercel Hobby's 60s cap can't fit scraping
+    // a full `limit` worth of businesses (each takes ~30s) in one call, so
+    // it loops the same way enrich/analyze/generate-email already do.
+    const batchedSteps = new Set(["scrape", "enrich", "analyze", "generate-email"]);
+    let scrapedKeysAccum: string[] = [];
     for (let i = 0; i < PIPELINE_STEPS.length; i++) {
       setPipelineStep(i);
       const { key, label } = PIPELINE_STEPS[i];
@@ -122,13 +126,19 @@ export default function Home() {
           const result = await postJSON(`/api/${key}`, bodies[key]);
           if (result.error) throw new Error(result.error);
           if (result.leads) setLeads(result.leads);
-          if (key === "scrape" && Array.isArray(result.scrapedKeys)) {
-            // Scope every later stage to exactly what this run scraped,
-            // instead of every un-processed lead ever saved to the table.
-            setSessionKeys(result.scrapedKeys);
-            bodies.enrich.keys = result.scrapedKeys;
-            bodies.analyze.keys = result.scrapedKeys;
-            bodies["generate-email"].keys = result.scrapedKeys;
+          if (key === "scrape") {
+            if (Array.isArray(result.scrapedKeys)) {
+              // Scope every later stage to exactly what this run scraped,
+              // instead of every un-processed lead ever saved to the table.
+              scrapedKeysAccum = scrapedKeysAccum.concat(result.scrapedKeys);
+              setSessionKeys(scrapedKeysAccum);
+              bodies.enrich.keys = scrapedKeysAccum;
+              bodies.analyze.keys = scrapedKeysAccum;
+              bodies["generate-email"].keys = scrapedKeysAccum;
+            }
+            // Ask for exactly what's still missing next time, not the full
+            // original limit again.
+            bodies.scrape.limit = result.remaining ?? 0;
           }
           remaining = batchedSteps.has(key) ? (result.remaining ?? 0) : 0;
         }
@@ -160,7 +170,9 @@ export default function Home() {
           stepIndex={pipelineStep}
           error={pipelineError}
           progress={
-            PIPELINE_STEPS[pipelineStep]?.key === "enrich" && sessionKeys.length > 0
+            PIPELINE_STEPS[pipelineStep]?.key === "scrape"
+              ? `Found ${sessionKeys.length}/${limit}...`
+              : PIPELINE_STEPS[pipelineStep]?.key === "enrich" && sessionKeys.length > 0
               ? `${leads.filter((l) => sessionKeys.includes(leadKey(l)) && l.email).length}/${sessionKeys.length} emails found`
               : null
           }

@@ -5,7 +5,11 @@ import { readLeads, upsertLeads } from "@/lib/store";
 import { Lead, leadKey } from "@/lib/schema";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+// Vercel Hobby hard-kills any function at 60s regardless of this value —
+// declaring the real cap here instead of a number the plan can't honor.
+// Safe as-is: leads are drafted fully concurrently (Promise.all below), so
+// wall time tracks the slowest single AI call, not the batch size.
+export const maxDuration = 60;
 
 async function generateForLead(client: AIClient, lead: Lead): Promise<Lead> {
   if (lead.status === "NEEDS_REVIEW" || !lead.observation) {

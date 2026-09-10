@@ -54,16 +54,27 @@ async function findEmailOnSite(context: BrowserContext, websiteUrl: string, time
 // overwhelming a single site's server. Revisit if batches grow much larger.
 const CONCURRENCY = 4;
 
-export async function enrichWebsites(websites: string[], headless = true): Promise<string[]> {
+// Vercel Hobby hard-kills a function at 60s regardless of maxDuration — a
+// large batchSize could otherwise run chunk after chunk past that wall. This
+// budgets the loop so it always returns early with whatever's done; the
+// caller (see /api/enrich) treats the shorter result as "processed so far"
+// and the rest as still `remaining`, same idea as scrapeMaps.ts's budget.
+const DEFAULT_BUDGET_MS = 30_000;
+
+export async function enrichWebsites(
+  websites: string[],
+  headless = true,
+  budgetMs: number = DEFAULT_BUDGET_MS
+): Promise<string[]> {
+  const startedAt = Date.now();
   const browser = await launchBrowser(headless);
   const context = await browser.newContext();
-  const emails: string[] = new Array(websites.length);
+  const emails: string[] = [];
   for (let i = 0; i < websites.length; i += CONCURRENCY) {
+    if (Date.now() - startedAt > budgetMs) break; // out of time this call — resume next call
     const chunk = websites.slice(i, i + CONCURRENCY);
     const results = await Promise.all(chunk.map((site) => findEmailOnSite(context, site)));
-    results.forEach((email, j) => {
-      emails[i + j] = email;
-    });
+    emails.push(...results);
     await pause();
   }
   await browser.close();

@@ -27,6 +27,10 @@ const themeStyle = `
   body { background: var(--bg); color: var(--fg); }
   a { color: var(--gold); }
 
+  /* Hide scrollbar chrome everywhere (page + .table-wrap) — content still scrolls, just no visible track/thumb. */
+  html, body, .table-wrap { scrollbar-width: none; -ms-overflow-style: none; }
+  html::-webkit-scrollbar, body::-webkit-scrollbar, .table-wrap::-webkit-scrollbar { display: none; }
+
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); }
 
   .field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .02em; }
