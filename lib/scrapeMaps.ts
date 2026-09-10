@@ -3,7 +3,7 @@
 // ToS prohibit automated scraping of their services — keep usage light and
 // occasional, not continuous/high-volume.
 import { launchBrowser } from "./browser.ts";
-import { emptyLead } from "./schema.ts";
+import { dedupeKey, emptyLead } from "./schema.ts";
 import type { Lead } from "./schema.ts";
 
 export function guessNicheAndCityFromQuery(query: string): { niche: string; city: string } {
@@ -44,10 +44,12 @@ export async function scrapeGoogleMaps(
   query: string,
   limit: number,
   headless = true,
-  excludeNames: Set<string> = new Set(),
+  // Place IDs (see dedupeKey) of businesses already collected, so a re-scrape
+  // skips them instead of re-clicking into the same listings.
+  excludeKeys: Set<string> = new Set(),
   // Persisting each business as it's found (see below) means a mid-run stop
   // — whether from the time budget or a platform kill — loses at most the
-  // one business in flight; the next call picks up from there via excludeNames.
+  // one business in flight; the next call picks up from there via excludeKeys.
   onLead?: (lead: Lead) => Promise<void>,
   budgetMs: number = DEFAULT_BUDGET_MS
 ): Promise<{ leads: Lead[]; exhausted: boolean }> {
@@ -97,12 +99,13 @@ export async function scrapeGoogleMaps(
   let { browser, page } = await openSession();
   let scrapedThisSession = 0;
 
-  // Seeding with already-saved names lets a Vercel Hobby deployment (60s
-  // function cap) build up a full result set across several small, separate
-  // scrape calls instead of one call needing to finish the whole limit —
-  // each call skips past what's already collected and clicks into fresh
-  // cards instead of re-fetching the same first N results every time.
-  const seenNames = new Set(excludeNames);
+  // Seeding with already-collected businesses lets a run build up a result set
+  // across several separate scrape calls instead of one call finishing the
+  // whole limit — each call skips past what's already collected and clicks
+  // into fresh cards instead of re-fetching the same first N every time. It's
+  // also what makes a *re-scrape* of the same query return new businesses
+  // rather than the ones already in the table.
+  const seenKeys = new Set(excludeKeys);
   let stagnantRounds = 0;
   let lastCardCount = 0;
 
@@ -133,10 +136,13 @@ export async function scrapeGoogleMaps(
       if (!withinBudget()) break; // out of time this call — return what we have, resume next call
       const name = await card.getAttribute("aria-label").catch(() => null);
       if (!name) continue; // card had no aria-label — likely a photo/thumbnail link, not the name link
-      if (seenNames.has(name)) continue;
-      seenNames.add(name);
       // The card *is* the link to the listing, so its href is the profile URL.
       const mapsUrl = (await card.getAttribute("href").catch(() => null)) || "";
+      // Read the identity off the card *before* clicking, so a business we've
+      // already got costs nothing — no click, no panel wait, no scrape.
+      const key = dedupeKey({ name, mapsUrl });
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
 
       // The open detail panel is a second role="main" whose accessible name
       // is the business name, so waiting for it proves *this* business's
@@ -161,6 +167,7 @@ export async function scrapeGoogleMaps(
       let address = "";
       let category = "";
       let rating = "";
+      let reviews = "";
 
       try {
         const phoneEl = panel.locator('button[data-item-id^="phone:"]').first();
@@ -195,12 +202,25 @@ export async function scrapeGoogleMaps(
         }
       } catch {}
 
+      try {
+        // Sits beside the stars as "(17)" with aria-label "17 reviews". The
+        // per-star breakdown rows say "5 stars, 2 reviews" too, but those are
+        // <tr>s — matching only a span keeps them out. Commas stripped so the
+        // column stays numeric in Sheets/Excel.
+        const reviewsEl = panel.locator('span[aria-label*="review"]').first();
+        if ((await reviewsEl.count()) > 0) {
+          const label = ((await reviewsEl.getAttribute("aria-label")) || "").trim();
+          reviews = label.match(/^([\d,]+)\s+reviews?$/i)?.[1].replace(/,/g, "") ?? "";
+        }
+      } catch {}
+
       const lead: Lead = {
         ...emptyLead(),
         name,
         mapsUrl,
         phone,
         rating,
+        reviews,
         website,
         city: address || fallback.city,
         niche: category || fallback.niche,

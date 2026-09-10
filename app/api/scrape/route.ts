@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { scrapeGoogleMaps } from "@/lib/scrapeMaps";
 import { readLeads, saveLead, upsertLeads } from "@/lib/store";
-import { leadKey } from "@/lib/schema";
+import { dedupeKey, leadKey } from "@/lib/schema";
 
 export const runtime = "nodejs";
 // Vercel Hobby hard-kills any function at 60s regardless of this value —
@@ -15,11 +15,12 @@ export async function POST(req: Request) {
   }
   const target = limit ?? 20;
 
-  // Skip businesses already saved so re-clicking Scrape with the same query
-  // picks up new results instead of re-fetching the same first N — needed on
-  // Vercel Hobby's 60s function cap, where one call often can't finish a
-  // large limit and building it up across several clicks is the workaround.
-  const alreadyKnown = new Set((await readLeads()).map((l) => l.name));
+  // Skip businesses already saved so re-scraping the same query picks up new
+  // results instead of re-collecting the ones already in the table. Keyed on
+  // Google's Place ID rather than the display name, which isn't stable —
+  // matching on the name let the same listing through twice under different
+  // spellings. Legacy rows with no mapsUrl still fall back to the name.
+  const alreadyKnown = new Set((await readLeads()).map(dedupeKey));
 
   // Only run non-headless in local dev, where there's a real display to
   // solve a CAPTCHA on by hand. Any deployed host (Render, Vercel, ...) has

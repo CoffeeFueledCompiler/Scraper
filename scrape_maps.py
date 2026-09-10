@@ -62,7 +62,7 @@ async def find_email_on_site(context, website_url, timeout_ms=15000):
         # Try to find a contact page link and check that too
         if not found:
             contact_href = await page.evaluate(
-                """() => {
+                """() => {-
                     const links = Array.from(document.querySelectorAll('a'));
                     const match = links.find(a =>
                         /contact/i.test(a.textContent || '') ||

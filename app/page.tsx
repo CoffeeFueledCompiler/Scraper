@@ -4,8 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { useSession, signOut } from "next-auth/react";
 import { Lead, leadKey } from "@/lib/schema";
 
-async function postJSON(url: string, body: unknown) {
-  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+async function postJSON(url: string, body: unknown, signal?: AbortSignal) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
   return res.json();
 }
 
@@ -23,6 +28,7 @@ const PIPELINE_STEPS = [
 ];
 
 function PipelineOverlay({
+  steps,
   stepIndex,
   error,
   stopped,
@@ -30,6 +36,7 @@ function PipelineOverlay({
   onDismiss,
   onStop,
 }: {
+  steps: typeof PIPELINE_STEPS;
   stepIndex: number;
   error: string | null;
   stopped: boolean;
@@ -41,7 +48,7 @@ function PipelineOverlay({
     <div className="pipeline-overlay">
       <div className="pipeline-card">
         <div className="pipeline-steps">
-          {PIPELINE_STEPS.map((s, i) => (
+          {steps.map((s, i) => (
             <div key={s.key} className="pipeline-step-wrap">
               <div className="pipeline-step">
                 <div
@@ -53,16 +60,16 @@ function PipelineOverlay({
                 </div>
                 <span className="pipeline-label">{s.label}</span>
               </div>
-              {i < PIPELINE_STEPS.length - 1 && <div className={`pipeline-line${i < stepIndex ? " is-done" : ""}`} />}
+              {i < steps.length - 1 && <div className={`pipeline-line${i < stepIndex ? " is-done" : ""}`} />}
             </div>
           ))}
         </div>
         <p className="pipeline-status">
           {error
-            ? `Failed at "${PIPELINE_STEPS[stepIndex]?.label}": ${error}`
+            ? `Failed at "${steps[stepIndex]?.label}": ${error}`
             : stopped
-            ? `Stopping after "${PIPELINE_STEPS[stepIndex]?.label}" finishes its current call...`
-            : `Running "${PIPELINE_STEPS[stepIndex]?.label}"...${progress ? ` (${progress})` : ""}`}
+            ? `Stopping "${steps[stepIndex]?.label}"...`
+            : `Running "${steps[stepIndex]?.label}"...${progress ? ` (${progress})` : ""}`}
         </p>
         {error ? (
           <button className="btn" onClick={onDismiss} style={{ alignSelf: "center" }}>
@@ -91,15 +98,31 @@ export default function Home() {
   const [pipelineStep, setPipelineStep] = useState<number | null>(null);
   const [pipelineError, setPipelineError] = useState<string | null>(null);
   const [pipelineStopped, setPipelineStopped] = useState(false);
+  const [activeSteps, setActiveSteps] = useState(PIPELINE_STEPS);
   // Checked synchronously between awaits in runPipeline's loop — a ref, not
   // state, so a click mid-await is seen the moment the current call resolves
   // instead of waiting for a re-render.
   const stopRequested = useRef(false);
+  // Aborts the request that's actually in flight. Without this, Stop could only
+  // take effect between calls, so a stage that hung (a slow scrape, a site that
+  // never responds) left no way out but reloading the page.
+  const inFlight = useRef<AbortController | null>(null);
   // Keys (name::city) of the leads this pipeline run scraped — scopes
   // Enrich/Analyze/Generate to just this batch instead of the whole backlog.
   const [sessionKeys, setSessionKeys] = useState<string[]>([]);
 
-  const refresh = () => fetch("/api/leads").then((r) => r.json()).then(setLeads);
+  // Guard the shape: if /api/leads errors it returns an object, and setting
+  // that as `leads` makes every leads.filter/.map below throw during render —
+  // which blanks the whole page and makes the buttons look dead.
+  const refresh = () =>
+    fetch("/api/leads")
+      .then((r) => r.json())
+      .then((data) => setLeads(Array.isArray(data) ? data : []))
+      .catch(() => setLeads([]));
+
+  // Leads still missing a stage's output — the exact set Resume would work on,
+  // so the button can show how much is outstanding (and disable when none is).
+  const unfinishedCount = leads.filter((l) => !l.email || !l.observation || (l.observation && !l.subject)).length;
 
   useEffect(() => {
     refresh();
@@ -119,8 +142,13 @@ export default function Home() {
     }
   };
 
-  const runPipeline = async () => {
+  // `steps` lets this run the whole pipeline or just the tail of it. Resume
+  // passes the post-scrape steps with scoping off, so each stage sweeps in
+  // every lead still missing that field — including ones orphaned when an
+  // earlier run was stopped partway.
+  const runPipeline = async (steps = PIPELINE_STEPS, scopeToThisRun = true) => {
     setBusy("pipeline");
+    setActiveSteps(steps);
     setPipelineError(null);
     setPipelineStopped(false);
     stopRequested.current = false;
@@ -136,21 +164,32 @@ export default function Home() {
     // it loops the same way enrich/analyze/generate-email already do.
     const batchedSteps = new Set(["scrape", "enrich", "analyze", "generate-email"]);
     let scrapedKeysAccum: string[] = [];
-    for (let i = 0; i < PIPELINE_STEPS.length; i++) {
+    for (let i = 0; i < steps.length; i++) {
       if (stopRequested.current) break;
       setPipelineStep(i);
-      const { key, label } = PIPELINE_STEPS[i];
+      const { key, label } = steps[i];
       try {
         let remaining = 1;
+        // A stage only loops while it's actually getting somewhere. Every stage
+        // re-selects its to-do list from the database each call, so work it
+        // can't complete — a site that publishes no email, a lead the AI keeps
+        // failing, a scrape Google is blocking — comes back identical next
+        // call and `remaining` never falls, so the loop spins forever.
+        let lastRemaining = Infinity;
         while (remaining > 0) {
-          // The in-flight call below still runs to completion server-side
-          // (there's no way to cancel a scrape/AI call already in progress)
-          // — stopping just means no further calls get kicked off after it.
-          const result = await postJSON(`/api/${key}`, bodies[key]);
+          // Each call gets its own controller so Stop can abort the request
+          // mid-flight. The server keeps working on whatever it already
+          // started — that can't be cancelled — but every lead it finishes is
+          // saved as it goes, so nothing done so far is lost, and Resume picks
+          // up whatever is still unfinished.
+          const controller = new AbortController();
+          inFlight.current = controller;
+          const result = await postJSON(`/api/${key}`, bodies[key], controller.signal);
+          inFlight.current = null;
           if (result.error) throw new Error(result.error);
           if (result.leads) setLeads(result.leads);
           if (key === "scrape") {
-            if (Array.isArray(result.scrapedKeys)) {
+            if (Array.isArray(result.scrapedKeys) && scopeToThisRun) {
               // Scope every later stage to exactly what this run scraped,
               // instead of every un-processed lead ever saved to the table.
               scrapedKeysAccum = scrapedKeysAccum.concat(result.scrapedKeys);
@@ -164,9 +203,14 @@ export default function Home() {
             bodies.scrape.limit = result.remaining ?? 0;
           }
           remaining = batchedSteps.has(key) ? (result.remaining ?? 0) : 0;
+          if (remaining >= lastRemaining) break; // no progress this round
+          lastRemaining = remaining;
           if (stopRequested.current) break;
         }
       } catch (err) {
+        // An abort is a deliberate stop, not a failure — fall through to the
+        // "stopped" message rather than showing an error.
+        if (stopRequested.current || (err instanceof DOMException && err.name === "AbortError")) break;
         setPipelineError(err instanceof Error ? err.message : String(err));
         setStatus(`Pipeline failed at "${label}": ${err instanceof Error ? err.message : String(err)}`);
         setBusy(null);
@@ -174,19 +218,27 @@ export default function Home() {
       }
       if (stopRequested.current) break;
     }
+    inFlight.current = null;
     setStatus(
       stopRequested.current
-        ? "Pipeline stopped by user."
+        ? 'Pipeline stopped. Anything already scraped is saved — click "Resume unfinished" to carry on from here.'
         : "Pipeline complete: scraped, enriched, analyzed, and drafted emails for all leads."
     );
     setPipelineStep(null);
     setPipelineStopped(false);
     setBusy(null);
+    refresh();
   };
+
+  // Skips scrape and re-runs the remaining stages unscoped, so every lead
+  // still missing an email/analysis/draft gets picked up — whatever run left
+  // it that way.
+  const resumeUnfinished = () => runPipeline(PIPELINE_STEPS.slice(1), false);
 
   const stopPipeline = () => {
     stopRequested.current = true;
     setPipelineStopped(true);
+    inFlight.current?.abort();
   };
 
   const clearData = async () => {
@@ -202,13 +254,14 @@ export default function Home() {
     <main style={{ maxWidth: 1180, margin: "0 auto", display: "flex", flexDirection: "column", gap: 20 }}>
       {pipelineStep !== null && (
         <PipelineOverlay
+          steps={activeSteps}
           stepIndex={pipelineStep}
           error={pipelineError}
           stopped={pipelineStopped}
           progress={
-            PIPELINE_STEPS[pipelineStep]?.key === "scrape"
+            activeSteps[pipelineStep]?.key === "scrape"
               ? `Found ${sessionKeys.length}/${limit}...`
-              : PIPELINE_STEPS[pipelineStep]?.key === "enrich" && sessionKeys.length > 0
+              : activeSteps[pipelineStep]?.key === "enrich" && sessionKeys.length > 0
               ? `${leads.filter((l) => sessionKeys.includes(leadKey(l)) && l.email).length}/${sessionKeys.length} emails found`
               : null
           }
@@ -248,8 +301,16 @@ export default function Home() {
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <button className="btn btn-primary" disabled={!!busy} onClick={runPipeline}>
+          <button className="btn btn-primary" disabled={!!busy} onClick={() => runPipeline()}>
             {busy === "pipeline" ? <span className="spinner" /> : null} Scrape → Emails → Analyze → Generate
+          </button>
+          <button
+            className="btn"
+            disabled={!!busy || unfinishedCount === 0}
+            onClick={resumeUnfinished}
+            title="Re-run Emails → Analyze → Generate over every lead that's still missing one, without scraping anything new"
+          >
+            Resume unfinished{unfinishedCount > 0 ? ` (${unfinishedCount})` : ""}
           </button>
           <a href="/api/export">
             <button className="btn" disabled={!!busy}>
