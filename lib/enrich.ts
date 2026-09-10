@@ -6,21 +6,46 @@ import type { BrowserContext } from "playwright-core";
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 const GENERIC_PREFIXES = ["info@", "contact@", "admin@", "office@", "support@"];
 
+// The address regex matches plenty of things in page source that are not
+// addresses. These all showed up in a real export and would have been mailed.
+const JUNK_PATTERNS = [
+  // Retina asset filenames: "ajax-loader@2x.gif", "flags@2x.png".
+  /\.(gif|png|jpe?g|svg|webp|ico|css|js)$/i,
+  // Sentry DSNs embedded in bundled JS (Wix sites leak these constantly).
+  /@sentry\./i,
+  // Boilerplate left in themes and templates.
+  /^(user|you|your\.?name|email|firstname\.lastname)@/i,
+  /@(example|domain|yourdomain|yoursite|email|test)\.(com|org|net)$/i,
+];
+
+const isJunk = (email: string) => JUNK_PATTERNS.some((re) => re.test(email));
+
 const pause = (a = 1000, b = 2000) => new Promise((r) => setTimeout(r, a + Math.random() * (b - a)));
 
 export function pickBestEmail(found: Set<string>): string {
-  if (found.size === 0) return "";
-  const nonGeneric = [...found].filter((e) => !GENERIC_PREFIXES.some((p) => e.toLowerCase().startsWith(p)));
-  const pool = nonGeneric.length > 0 ? nonGeneric : [...found];
+  const usable = [...found].filter((e) => !isJunk(e));
+  if (usable.length === 0) return "";
+  const nonGeneric = usable.filter((e) => !GENERIC_PREFIXES.some((p) => e.toLowerCase().startsWith(p)));
+  const pool = nonGeneric.length > 0 ? nonGeneric : usable;
   return pool.sort()[0];
 }
+
+// Hard ceiling on one site, however it misbehaves. Only page.goto() used to be
+// bounded — page.content() and page.evaluate() had no timeout at all, so a page
+// that never settles hung them forever. That stalled the whole concurrent chunk,
+// which meant the budget (only checked between chunks) was never reached, the
+// browser was never closed, and the request never returned: the pipeline just
+// froze mid-run. setDefaultTimeout bounds each operation; this bounds the total.
+const SITE_DEADLINE_MS = 30_000;
 
 async function findEmailOnSite(context: BrowserContext, websiteUrl: string, timeoutMs = 15000): Promise<string> {
   if (!websiteUrl) return "";
 
   const page = await context.newPage();
+  page.setDefaultTimeout(timeoutMs);
   const found = new Set<string>();
-  try {
+
+  const scrape = async () => {
     await page.goto(websiteUrl, { timeout: timeoutMs, waitUntil: "domcontentloaded" });
     const html = await page.content();
     for (const m of html.matchAll(EMAIL_RE)) found.add(m[0]);
@@ -40,10 +65,22 @@ async function findEmailOnSite(context: BrowserContext, websiteUrl: string, time
         for (const m of html2.matchAll(EMAIL_RE)) found.add(m[0]);
       }
     }
+  };
+
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      scrape(),
+      new Promise((_, reject) => {
+        deadline = setTimeout(() => reject(new Error(`site deadline: ${websiteUrl}`)), SITE_DEADLINE_MS);
+      }),
+    ]);
   } catch {
-    // best-effort — leave found as-is
+    // best-effort — keep whatever was found before it gave up
   } finally {
-    await page.close();
+    clearTimeout(deadline);
+    // Closing cancels anything still in flight, so a hung page can't leak.
+    await page.close().catch(() => {});
   }
 
   return pickBestEmail(found);

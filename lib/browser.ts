@@ -9,6 +9,26 @@
 // runs headless, since there's no one to click through a CAPTCHA anyway.
 import type { Browser } from "playwright-core";
 
+// Tuned for a 512MB container, where Chromium plus the Next.js server is a
+// tight fit and overrunning gets the whole instance OOM-killed and restarted.
+const LOW_MEMORY_ARGS = [
+  // A container's /dev/shm is 64MB by default; once Chromium outgrows it it
+  // falls back to disk-backed shared memory and thrashes.
+  "--disable-dev-shm-usage",
+  // Headless has no GPU to use anyway — skips the failed-init path.
+  "--disable-gpu",
+  // Reuse one renderer instead of spawning a process per site. Site isolation
+  // stays on, so this trades some crash isolation, not a security boundary.
+  "--renderer-process-limit=1",
+  // Chrome services we never use but that hold memory for the whole session.
+  "--disable-background-networking",
+  "--disable-extensions",
+  "--disable-default-apps",
+  "--disable-sync",
+  "--mute-audio",
+  "--no-first-run",
+];
+
 export async function launchBrowser(headless: boolean): Promise<Browser> {
   if (process.env.VERCEL) {
     const { chromium } = await import("playwright-core");
@@ -20,9 +40,5 @@ export async function launchBrowser(headless: boolean): Promise<Browser> {
     });
   }
   const { chromium } = await import("playwright");
-  // --disable-dev-shm-usage: a container's /dev/shm is 64MB by default, and
-  // once Chromium outgrows it it falls back to disk-backed shared memory,
-  // which thrashes hard on a small instance. --disable-gpu: headless has no
-  // GPU to use anyway, this skips the failed-init path.
-  return chromium.launch({ headless, args: ["--disable-dev-shm-usage", "--disable-gpu"] });
+  return chromium.launch({ headless, args: LOW_MEMORY_ARGS });
 }

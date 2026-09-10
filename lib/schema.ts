@@ -1,6 +1,9 @@
 // Canonical lead shape. Every API route reads/writes this — no ad-hoc field names elsewhere.
 export type Lead = {
   name: string;
+  // The business's own Google Maps listing — the /maps/place/ URL straight off
+  // the result card, so it's a link back to the exact profile that was scraped.
+  mapsUrl: string;
   phone: string;
   website: string;
   city: string;
@@ -17,6 +20,7 @@ export type Lead = {
 
 export const emptyLead = (): Lead => ({
   name: "",
+  mapsUrl: "",
   phone: "",
   website: "",
   city: "",
@@ -35,6 +39,7 @@ export const leadKey = (l: Pick<Lead, "name" | "city">) => `${l.name}::${l.city}
 
 // Final export column order/headers, per PROJECT_PLAN.md #2.
 export const FINAL_COLUMNS: { header: string; field: keyof Lead }[] = [
+  { header: "Google Maps Link", field: "mapsUrl" },
   { header: "Business Name", field: "name" },
   { header: "Email Address", field: "email" },
   { header: "City", field: "city" },

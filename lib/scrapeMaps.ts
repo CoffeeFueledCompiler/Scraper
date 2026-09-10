@@ -34,6 +34,12 @@ const DEFAULT_BUDGET_MS = process.env.VERCEL ? 40_000 : 90_000;
 // address blank — which is what left the CSV export with nothing but headers.
 const PANEL_TIMEOUT_MS = 15_000;
 
+// Recycle Chromium after this many businesses, to bound peak memory on a
+// 512MB instance. Each recycle costs a relaunch plus re-scrolling the feed
+// back to where it was, so this trades a little speed for not being OOM-killed
+// mid-run — raise it if the instance has RAM to spare.
+const RECYCLE_AFTER_LEADS = 10;
+
 export async function scrapeGoogleMaps(
   query: string,
   limit: number,
@@ -50,37 +56,46 @@ export async function scrapeGoogleMaps(
   const results: Lead[] = [];
   const fallback = guessNicheAndCityFromQuery(query);
 
-  const browser = await launchBrowser(headless);
-  const context = await browser.newContext({ locale: "en-US", viewport: { width: 1280, height: 900 } });
-  // Map tiles and business photos are the bulk of what Maps downloads and
-  // decodes, and every field scraped below comes from the DOM (aria-labels,
-  // text) — never from a rendered image. Stylesheets are deliberately NOT
-  // blocked: the detail-panel waitFor() below checks visibility, which needs
-  // real layout to resolve.
-  await context.route("**/*", (route) => {
-    const type = route.request().resourceType();
-    return type === "image" || type === "media" || type === "font" ? route.abort() : route.continue();
-  });
-  const page = await context.newPage();
-
-  await page.goto(`https://www.google.com/maps/search/${query.replace(/ /g, "+")}`, { timeout: 30000 });
-
-  try {
-    const consentBtn = page.locator("button:has-text('Accept all')");
-    if ((await consentBtn.count()) > 0) {
-      await consentBtn.first().click();
-      await pause();
-    }
-  } catch {
-    // no consent dialog — fine
-  }
-
   const feedSelector = 'div[role="feed"]';
-  try {
-    await page.waitForSelector(feedSelector, { timeout: 15000 });
-  } catch {
-    console.error("scrape_maps: results feed never appeared — Google may be showing a CAPTCHA.");
-  }
+
+  // A whole browser session: launch, load the search, clear consent, wait for
+  // the feed. Called again mid-run to recycle Chromium (see the loop below).
+  const openSession = async () => {
+    const browser = await launchBrowser(headless);
+    const context = await browser.newContext({ locale: "en-US", viewport: { width: 1280, height: 900 } });
+    // Map tiles and business photos are the bulk of what Maps downloads and
+    // decodes, and every field scraped below comes from the DOM (aria-labels,
+    // text) — never from a rendered image. Stylesheets are deliberately NOT
+    // blocked: the detail-panel waitFor() below checks visibility, which needs
+    // real layout to resolve.
+    await context.route("**/*", (route) => {
+      const type = route.request().resourceType();
+      return type === "image" || type === "media" || type === "font" ? route.abort() : route.continue();
+    });
+    const page = await context.newPage();
+
+    await page.goto(`https://www.google.com/maps/search/${query.replace(/ /g, "+")}`, { timeout: 30000 });
+
+    try {
+      const consentBtn = page.locator("button:has-text('Accept all')");
+      if ((await consentBtn.count()) > 0) {
+        await consentBtn.first().click();
+        await pause();
+      }
+    } catch {
+      // no consent dialog — fine
+    }
+
+    try {
+      await page.waitForSelector(feedSelector, { timeout: 15000 });
+    } catch {
+      console.error("scrape_maps: results feed never appeared — Google may be showing a CAPTCHA.");
+    }
+    return { browser, page };
+  };
+
+  let { browser, page } = await openSession();
+  let scrapedThisSession = 0;
 
   // Seeding with already-saved names lets a Vercel Hobby deployment (60s
   // function cap) build up a full result set across several small, separate
@@ -92,6 +107,21 @@ export async function scrapeGoogleMaps(
   let lastCardCount = 0;
 
   while (results.length < limit && stagnantRounds < 5 && withinBudget()) {
+    // Chromium's footprint grows with every detail panel it renders, and on a
+    // 512MB instance a long run OOMs partway through — the container gets
+    // killed and restarted, losing the in-flight browser. Recycling caps peak
+    // memory at roughly one short session's worth. seenNames survives the
+    // swap, so the fresh session scrolls past what's already collected rather
+    // than rescraping it.
+    if (scrapedThisSession >= RECYCLE_AFTER_LEADS) {
+      console.error(`scrape_maps: recycling browser after ${scrapedThisSession} leads to cap memory`);
+      await browser.close();
+      ({ browser, page } = await openSession());
+      scrapedThisSession = 0;
+      lastCardCount = 0;
+      stagnantRounds = 0;
+    }
+
     // Match on the stable /maps/place/ URL pattern rather than a specific div
     // nesting depth or class name — Google reshuffles those often enough
     // that a structural selector silently matches zero cards.
@@ -105,6 +135,8 @@ export async function scrapeGoogleMaps(
       if (!name) continue; // card had no aria-label — likely a photo/thumbnail link, not the name link
       if (seenNames.has(name)) continue;
       seenNames.add(name);
+      // The card *is* the link to the listing, so its href is the profile URL.
+      const mapsUrl = (await card.getAttribute("href").catch(() => null)) || "";
 
       // The open detail panel is a second role="main" whose accessible name
       // is the business name, so waiting for it proves *this* business's
@@ -166,6 +198,7 @@ export async function scrapeGoogleMaps(
       const lead: Lead = {
         ...emptyLead(),
         name,
+        mapsUrl,
         phone,
         rating,
         website,
@@ -173,6 +206,7 @@ export async function scrapeGoogleMaps(
         niche: category || fallback.niche,
       };
       results.push(lead);
+      scrapedThisSession++;
       if (onLead) await onLead(lead);
     }
 
