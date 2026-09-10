@@ -5,8 +5,8 @@ Small-scale agent for pulling business name, phone, website, and a
 best-effort email (found by visiting the business's own website) for
 a Google Maps search query.
 
-USAGE:
-    python scraper.py "dentists in Bhopal" --limit 20 --out results.csv
+USAGE(Just like google maps):
+    python scraper.py "Target, city, State, Country" --limit 20 --out results.csv
 
 NOTES / CAVEATS (read before running at any real volume):
 - This automates a real Chromium browser against Google Maps' public UI.

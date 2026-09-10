@@ -200,3 +200,4 @@ The prompts can't repair these — your scrape has to:
 
 - **Location mismatch.** "Salon Texas" is in Minuwangoda, Sri Lanka and "Texas unisex salon" is in Maharashtra, India. The word "Texas" in the search query pulled in businesses outside the target market. Filter on country/state before enrichment.
 - **Rating format.** "4.7 stars" and "4.7 (26)" are mixed in one column. Split into `rating` and `review_count` so the review count can feed the prompts — a 4.7 from 26 reviews and a 4.7 from 400 reviews justify very different observations.
+    
