@@ -20,5 +20,9 @@ export async function launchBrowser(headless: boolean): Promise<Browser> {
     });
   }
   const { chromium } = await import("playwright");
-  return chromium.launch({ headless });
+  // --disable-dev-shm-usage: a container's /dev/shm is 64MB by default, and
+  // once Chromium outgrows it it falls back to disk-backed shared memory,
+  // which thrashes hard on a small instance. --disable-gpu: headless has no
+  // GPU to use anyway, this skips the failed-init path.
+  return chromium.launch({ headless, args: ["--disable-dev-shm-usage", "--disable-gpu"] });
 }

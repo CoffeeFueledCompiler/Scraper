@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { scrapeGoogleMaps } from "@/lib/scrapeMaps";
-import { readLeads, upsertLeads } from "@/lib/store";
+import { readLeads, saveLead, upsertLeads } from "@/lib/store";
 import { leadKey } from "@/lib/schema";
 
 export const runtime = "nodejs";
@@ -32,9 +32,7 @@ export async function POST(req: Request) {
   // loop's own time budget (see scrapeMaps.ts), and without this, a mid-run
   // stop would discard everything scraped so far instead of just the one
   // business in flight.
-  const { leads: scraped, exhausted } = await scrapeGoogleMaps(query, target, headless, alreadyKnown, (lead) =>
-    upsertLeads([lead]).then(() => undefined)
-  );
+  const { leads: scraped, exhausted } = await scrapeGoogleMaps(query, target, headless, alreadyKnown, saveLead);
   const leads = await upsertLeads(scraped);
   // The exact set of leads this call scraped, so the pipeline's later stages
   // can be scoped to just this run instead of sweeping in the whole backlog.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSession, signOut } from "next-auth/react";
 import { Lead, leadKey } from "@/lib/schema";
 
@@ -25,13 +25,17 @@ const PIPELINE_STEPS = [
 function PipelineOverlay({
   stepIndex,
   error,
+  stopped,
   progress,
   onDismiss,
+  onStop,
 }: {
   stepIndex: number;
   error: string | null;
+  stopped: boolean;
   progress: string | null;
   onDismiss: () => void;
+  onStop: () => void;
 }) {
   return (
     <div className="pipeline-overlay">
@@ -56,12 +60,20 @@ function PipelineOverlay({
         <p className="pipeline-status">
           {error
             ? `Failed at "${PIPELINE_STEPS[stepIndex]?.label}": ${error}`
+            : stopped
+            ? `Stopping after "${PIPELINE_STEPS[stepIndex]?.label}" finishes its current call...`
             : `Running "${PIPELINE_STEPS[stepIndex]?.label}"...${progress ? ` (${progress})` : ""}`}
         </p>
-        {error && (
+        {error ? (
           <button className="btn" onClick={onDismiss} style={{ alignSelf: "center" }}>
             Dismiss
           </button>
+        ) : (
+          !stopped && (
+            <button className="btn btn-danger" onClick={onStop} style={{ alignSelf: "center" }}>
+              Stop
+            </button>
+          )
         )}
       </div>
     </div>
@@ -78,6 +90,11 @@ export default function Home() {
   const [status, setStatus] = useState("");
   const [pipelineStep, setPipelineStep] = useState<number | null>(null);
   const [pipelineError, setPipelineError] = useState<string | null>(null);
+  const [pipelineStopped, setPipelineStopped] = useState(false);
+  // Checked synchronously between awaits in runPipeline's loop — a ref, not
+  // state, so a click mid-await is seen the moment the current call resolves
+  // instead of waiting for a re-render.
+  const stopRequested = useRef(false);
   // Keys (name::city) of the leads this pipeline run scraped — scopes
   // Enrich/Analyze/Generate to just this batch instead of the whole backlog.
   const [sessionKeys, setSessionKeys] = useState<string[]>([]);
@@ -105,6 +122,8 @@ export default function Home() {
   const runPipeline = async () => {
     setBusy("pipeline");
     setPipelineError(null);
+    setPipelineStopped(false);
+    stopRequested.current = false;
     setSessionKeys([]);
     const bodies: Record<string, any> = {
       scrape: { query, limit },
@@ -118,11 +137,15 @@ export default function Home() {
     const batchedSteps = new Set(["scrape", "enrich", "analyze", "generate-email"]);
     let scrapedKeysAccum: string[] = [];
     for (let i = 0; i < PIPELINE_STEPS.length; i++) {
+      if (stopRequested.current) break;
       setPipelineStep(i);
       const { key, label } = PIPELINE_STEPS[i];
       try {
         let remaining = 1;
         while (remaining > 0) {
+          // The in-flight call below still runs to completion server-side
+          // (there's no way to cancel a scrape/AI call already in progress)
+          // — stopping just means no further calls get kicked off after it.
           const result = await postJSON(`/api/${key}`, bodies[key]);
           if (result.error) throw new Error(result.error);
           if (result.leads) setLeads(result.leads);
@@ -141,6 +164,7 @@ export default function Home() {
             bodies.scrape.limit = result.remaining ?? 0;
           }
           remaining = batchedSteps.has(key) ? (result.remaining ?? 0) : 0;
+          if (stopRequested.current) break;
         }
       } catch (err) {
         setPipelineError(err instanceof Error ? err.message : String(err));
@@ -148,10 +172,21 @@ export default function Home() {
         setBusy(null);
         return;
       }
+      if (stopRequested.current) break;
     }
-    setStatus("Pipeline complete: scraped, enriched, analyzed, and drafted emails for all leads.");
+    setStatus(
+      stopRequested.current
+        ? "Pipeline stopped by user."
+        : "Pipeline complete: scraped, enriched, analyzed, and drafted emails for all leads."
+    );
     setPipelineStep(null);
+    setPipelineStopped(false);
     setBusy(null);
+  };
+
+  const stopPipeline = () => {
+    stopRequested.current = true;
+    setPipelineStopped(true);
   };
 
   const clearData = async () => {
@@ -169,6 +204,7 @@ export default function Home() {
         <PipelineOverlay
           stepIndex={pipelineStep}
           error={pipelineError}
+          stopped={pipelineStopped}
           progress={
             PIPELINE_STEPS[pipelineStep]?.key === "scrape"
               ? `Found ${sessionKeys.length}/${limit}...`
@@ -177,6 +213,7 @@ export default function Home() {
               : null
           }
           onDismiss={() => setPipelineStep(null)}
+          onStop={stopPipeline}
         />
       )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>

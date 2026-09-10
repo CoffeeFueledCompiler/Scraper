@@ -23,6 +23,12 @@ const pause = (a = 800, b = 1800) => new Promise((r) => setTimeout(r, a + Math.r
 // of relying on the platform to kill it mid-work.
 const DEFAULT_BUDGET_MS = 40_000;
 
+// How long to wait for a clicked business's detail panel to render. The old
+// 8s was tuned on a desktop; on Render's 0.5 CPU the panel routinely took
+// longer, every wait timed out, and each lead was saved with phone/website/
+// address blank — which is what left the CSV export with nothing but headers.
+const PANEL_TIMEOUT_MS = 15_000;
+
 export async function scrapeGoogleMaps(
   query: string,
   limit: number,
@@ -41,6 +47,15 @@ export async function scrapeGoogleMaps(
 
   const browser = await launchBrowser(headless);
   const context = await browser.newContext({ locale: "en-US", viewport: { width: 1280, height: 900 } });
+  // Map tiles and business photos are the bulk of what Maps downloads and
+  // decodes, and every field scraped below comes from the DOM (aria-labels,
+  // text) — never from a rendered image. Stylesheets are deliberately NOT
+  // blocked: the detail-panel waitFor() below checks visibility, which needs
+  // real layout to resolve.
+  await context.route("**/*", (route) => {
+    const type = route.request().resourceType();
+    return type === "image" || type === "media" || type === "font" ? route.abort() : route.continue();
+  });
   const page = await context.newPage();
 
   await page.goto(`https://www.google.com/maps/search/${query.replace(/ /g, "+")}`, { timeout: 30000 });
@@ -86,16 +101,21 @@ export async function scrapeGoogleMaps(
       if (seenNames.has(name)) continue;
       seenNames.add(name);
 
+      // The open detail panel is a second role="main" whose accessible name
+      // is the business name, so waiting for it proves *this* business's
+      // panel is up — and scoping every read below to it is what stops the
+      // page-wide locators from matching the results feed instead, which is
+      // how every lead ended up with the first feed card's rating.
+      const panel = page.getByRole("main", { name });
       try {
         await card.click();
-        // Wait for the details panel heading to actually switch to this
-        // business before reading its fields — a fixed pause isn't enough
-        // when Google is slow to re-render, and scraping too early reads
-        // the *previous* card's still-visible phone/website/address.
-        await page.locator("h1.DUwDvf").filter({ hasText: name }).first().waitFor({ timeout: 8000 });
+        await panel.waitFor({ timeout: PANEL_TIMEOUT_MS });
       } catch {
-        // fall through and try to scrape anyway — better than skipping
-        // the business entirely, though fields may end up blank/stale
+        // Panel never opened — a slow instance, or Google throttling. Skip
+        // rather than save a row with every field blank: nothing was learned
+        // about this business, and leaving it unsaved means a later call
+        // retries it, since excludeNames is seeded from saved leads only.
+        continue;
       }
       await pause(400, 900);
 
@@ -106,38 +126,35 @@ export async function scrapeGoogleMaps(
       let rating = "";
 
       try {
-        const phoneEl = page.locator('button[data-item-id^="phone:"]').first();
+        const phoneEl = panel.locator('button[data-item-id^="phone:"]').first();
         if ((await phoneEl.count()) > 0) {
           phone = ((await phoneEl.getAttribute("aria-label")) || "").replace("Phone: ", "").trim();
         }
       } catch {}
 
       try {
-        const siteEl = page.locator('a[data-item-id="authority"]').first();
+        const siteEl = panel.locator('a[data-item-id="authority"]').first();
         if ((await siteEl.count()) > 0) website = (await siteEl.getAttribute("href")) || "";
       } catch {}
 
       try {
-        const addressEl = page.locator('button[data-item-id="address"]').first();
+        const addressEl = panel.locator('button[data-item-id="address"]').first();
         if ((await addressEl.count()) > 0) {
           address = ((await addressEl.getAttribute("aria-label")) || "").replace("Address: ", "").trim();
         }
       } catch {}
 
       try {
-        const categoryEl = page.locator("button.DkEaL").first();
+        const categoryEl = panel.locator("button.DkEaL").first();
         if ((await categoryEl.count()) > 0) category = (await categoryEl.innerText()).trim();
       } catch {}
 
       try {
-        // The star-rating icon's aria-label carries both figures, e.g.
-        // "4.6 stars 191 Reviews" — parse it down to "4.6 (191)" and fall
-        // back to the raw label if Google's wording ever shifts.
-        const ratingEl = page.locator('span[role="img"][aria-label*="star"]').first();
+        // Bare number only ("4.7", "5"): the panel's label reads "4.7 stars",
+        // with no review count on it unlike the feed card's.
+        const ratingEl = panel.locator('span[role="img"][aria-label*="star"]').first();
         if ((await ratingEl.count()) > 0) {
-          const label = ((await ratingEl.getAttribute("aria-label")) || "").trim();
-          const match = label.match(/^([\d.]+)\s*stars?\s+([\d,]+)\s*Reviews?/i);
-          rating = match ? `${match[1]} (${match[2]})` : label;
+          rating = ((await ratingEl.getAttribute("aria-label")) || "").match(/[\d.]+/)?.[0] ?? "";
         }
       } catch {}
 

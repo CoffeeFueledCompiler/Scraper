@@ -69,6 +69,15 @@ export async function enrichWebsites(
   const startedAt = Date.now();
   const browser = await launchBrowser(headless);
   const context = await browser.newContext();
+  // Only raw HTML matters here (regex over page.content(), plus textContent /
+  // getAttribute), so anything that exists purely to render the page is dead
+  // weight — stylesheets included, unlike the Maps scraper.
+  await context.route("**/*", (route) => {
+    const type = route.request().resourceType();
+    return type === "image" || type === "media" || type === "font" || type === "stylesheet"
+      ? route.abort()
+      : route.continue();
+  });
   const emails: string[] = [];
   for (let i = 0; i < websites.length; i += CONCURRENCY) {
     if (Date.now() - startedAt > budgetMs) break; // out of time this call — resume next call

@@ -30,6 +30,17 @@ export async function writeLeads(leads: Lead[]): Promise<void> {
   }
 }
 
+// Save one lead without reading the table back — for the scrape loop's
+// per-lead checkpoint, which discards the result anyway. upsertLeads' full
+// readLeads() there meant a whole-table SELECT per business scraped.
+export async function saveLead(lead: Lead): Promise<void> {
+  await prisma.lead.upsert({
+    where: { name_city: { name: lead.name, city: lead.city } },
+    create: lead,
+    update: lead,
+  });
+}
+
 // Merge new/updated leads into the store, keyed by name+city.
 export async function upsertLeads(updates: Lead[]): Promise<Lead[]> {
   for (const data of updates) {
