@@ -59,7 +59,9 @@ const CONCURRENCY = 4;
 // budgets the loop so it always returns early with whatever's done; the
 // caller (see /api/enrich) treats the shorter result as "processed so far"
 // and the rest as still `remaining`, same idea as scrapeMaps.ts's budget.
-const DEFAULT_BUDGET_MS = 30_000;
+// Hosts with no function cap get a longer budget for the same reason as
+// there: each resumed call pays for a fresh browser launch.
+const DEFAULT_BUDGET_MS = process.env.VERCEL ? 30_000 : 90_000;
 
 export async function enrichWebsites(
   websites: string[],

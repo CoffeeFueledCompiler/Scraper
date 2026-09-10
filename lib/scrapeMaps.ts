@@ -16,12 +16,17 @@ export function guessNicheAndCityFromQuery(query: string): { niche: string; city
 
 const pause = (a = 800, b = 1800) => new Promise((r) => setTimeout(r, a + Math.random() * (b - a)));
 
-// Vercel Hobby hard-kills a function at 60s no matter what maxDuration says.
-// Each business can take ~30s to scrape (Google's detail panel is slow), so
-// a `limit` of even 5-10 can't safely fit one call — this budgets the
-// scraping loop itself so it always returns well before that wall, instead
-// of relying on the platform to kill it mid-work.
-const DEFAULT_BUDGET_MS = 40_000;
+// Vercel Hobby hard-kills a function at 60s no matter what maxDuration says,
+// so there the loop has to budget itself and resume on the next call.
+//
+// Resuming is expensive: every resumed call relaunches Chromium, reloads
+// Maps, waits for the feed again, and re-scrolls from the top past every
+// business already in seenNames just to reach new ones — so the deeper the
+// run gets, the more work is redone. That overhead was most of why a 20-lead
+// scrape crawled at ~2 leads per 50s call. Hosts without a function cap
+// (Render, local) get a much longer budget so a run finishes in one browser
+// session; the resume path stays as a safety net, it just rarely triggers.
+const DEFAULT_BUDGET_MS = process.env.VERCEL ? 40_000 : 90_000;
 
 // How long to wait for a clicked business's detail panel to render. The old
 // 8s was tuned on a desktop; on Render's 0.5 CPU the panel routinely took
