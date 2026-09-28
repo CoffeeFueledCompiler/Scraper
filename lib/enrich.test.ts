@@ -31,6 +31,18 @@ test("rejects template placeholder addresses", () => {
   assert.equal(pickBestEmail(new Set(["you@example.com"])), "");
 });
 
+test("rejects site-builder placeholders", () => {
+  assert.equal(pickBestEmail(new Set(["filler@godaddy.com"])), "");
+  assert.equal(pickBestEmail(new Set(["youremail@yourbusiness.com"])), "");
+});
+
+test("prefers the business's own domain over a designer's footer address", () => {
+  const found = new Set(["hello@webagency.com", "info@acmehvac.com"]);
+  assert.equal(pickBestEmail(found, "https://www.acmehvac.com/?utm_source=gmb"), "info@acmehvac.com");
+  // No own-domain address: fall back rather than return nothing.
+  assert.equal(pickBestEmail(new Set(["acmehvac@gmail.com"]), "https://acmehvac.com"), "acmehvac@gmail.com");
+});
+
 test("keeps a real address found alongside junk", () => {
   assert.equal(pickBestEmail(new Set(["user@domain.com", "ajax-loader@2x.gif", "info@salon.com"])), "info@salon.com");
 });

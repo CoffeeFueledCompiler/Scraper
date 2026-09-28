@@ -14,19 +14,35 @@ const JUNK_PATTERNS = [
   // Sentry DSNs embedded in bundled JS (Wix sites leak these constantly).
   /@sentry\./i,
   // Boilerplate left in themes and templates.
-  /^(user|you|your\.?name|email|firstname\.lastname)@/i,
-  /@(example|domain|yourdomain|yoursite|email|test)\.(com|org|net)$/i,
+  /^(user|you|your\.?name|youremail|email|filler|firstname\.lastname)@/i,
+  /@(example|domain|yourdomain|yoursite|yourbusiness|yourcompany|email|test)\.(com|org|net)$/i,
+  // Site-builder placeholders ("filler@godaddy.com") — never the business itself.
+  /@godaddy\.com$/i,
 ];
 
 const isJunk = (email: string) => JUNK_PATTERNS.some((re) => re.test(email));
 
 const pause = (a = 1000, b = 2000) => new Promise((r) => setTimeout(r, a + Math.random() * (b - a)));
 
-export function pickBestEmail(found: Set<string>): string {
+function siteDomain(websiteUrl: string): string {
+  try {
+    return new URL(websiteUrl).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+export function pickBestEmail(found: Set<string>, websiteUrl = ""): string {
   const usable = [...found].filter((e) => !isJunk(e));
   if (usable.length === 0) return "";
-  const nonGeneric = usable.filter((e) => !GENERIC_PREFIXES.some((p) => e.toLowerCase().startsWith(p)));
-  const pool = nonGeneric.length > 0 ? nonGeneric : usable;
+  // An address on the business's own domain beats one that merely appears on
+  // the page — footers carry the web designer's or parent company's address.
+  // Others are kept as a fallback, not rejected: plenty of owners use Gmail.
+  const domain = siteDomain(websiteUrl);
+  const own = domain ? usable.filter((e) => e.split("@")[1].toLowerCase().replace(/^www\./, "") === domain) : [];
+  const candidates = own.length > 0 ? own : usable;
+  const nonGeneric = candidates.filter((e) => !GENERIC_PREFIXES.some((p) => e.toLowerCase().startsWith(p)));
+  const pool = nonGeneric.length > 0 ? nonGeneric : candidates;
   return pool.sort()[0];
 }
 
@@ -83,7 +99,7 @@ async function findEmailOnSite(context: BrowserContext, websiteUrl: string, time
     await page.close().catch(() => {});
   }
 
-  return pickBestEmail(found);
+  return pickBestEmail(found, websiteUrl);
 }
 
 // ponytail: fixed concurrency of 4, not tuned/configurable — good enough to

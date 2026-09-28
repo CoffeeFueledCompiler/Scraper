@@ -188,6 +188,10 @@ export default function Home() {
           inFlight.current = null;
           if (result.error) throw new Error(result.error);
           if (result.leads) setLeads(result.leads);
+          // Don't hand enrich the same sites again next call — see /api/enrich.
+          if (key === "enrich" && Array.isArray(result.attemptedKeys)) {
+            bodies.enrich.skip = [...(bodies.enrich.skip ?? []), ...result.attemptedKeys];
+          }
           if (key === "scrape") {
             if (Array.isArray(result.scrapedKeys) && scopeToThisRun) {
               // Scope every later stage to exactly what this run scraped,

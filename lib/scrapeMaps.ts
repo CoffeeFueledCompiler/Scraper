@@ -5,6 +5,7 @@
 import { launchBrowser } from "./browser.ts";
 import { dedupeKey, emptyLead } from "./schema.ts";
 import type { Lead } from "./schema.ts";
+import type { BrowserContext } from "playwright-core";
 
 export function guessNicheAndCityFromQuery(query: string): { niche: string; city: string } {
   const match = query.match(/\bin\s+(.+)$/i);
@@ -16,66 +17,43 @@ export function guessNicheAndCityFromQuery(query: string): { niche: string; city
 
 const pause = (a = 800, b = 1800) => new Promise((r) => setTimeout(r, a + Math.random() * (b - a)));
 
-// Vercel Hobby hard-kills a function at 60s no matter what maxDuration says,
-// so there the loop has to budget itself and resume on the next call.
-//
-// Resuming is expensive: every resumed call relaunches Chromium, reloads
-// Maps, waits for the feed again, and re-scrolls from the top past every
-// business already in seenNames just to reach new ones — so the deeper the
-// run gets, the more work is redone. That overhead was most of why a 20-lead
-// scrape crawled at ~2 leads per 50s call. Hosts without a function cap
-// (Render, local) get a much longer budget so a run finishes in one browser
-// session; the resume path stays as a safety net, it just rarely triggers.
-const DEFAULT_BUDGET_MS = process.env.VERCEL ? 40_000 : 90_000;
+// Vercel Hobby hard-kills a function at 60s no matter what maxDuration says.
+// Elsewhere the ceiling is whatever sits in front of the server: dev tunnels
+// and Cloudflare cut a request at ~100s, and the old 90s budget plus the
+// listing still in flight plus browser teardown ran straight past that. 60s
+// leaves room for both; the frontend loops on `remaining` for the rest, and
+// resuming is cheap now that phase 1 only scrolls (no clicks) to catch up.
+const DEFAULT_BUDGET_MS = process.env.VERCEL ? 40_000 : 60_000;
 
-// How long to wait for a clicked business's detail panel to render. The old
-// 8s was tuned on a desktop; on Render's 0.5 CPU the panel routinely took
-// longer, every wait timed out, and each lead was saved with phone/website/
-// address blank — which is what left the CSV export with nothing but headers.
+// How long to wait for a business's detail panel to render. The old 8s was
+// tuned on a desktop; on Render's 0.5 CPU the panel routinely took longer,
+// every wait timed out, and each lead was saved with phone/website/address
+// blank — which is what left the CSV export with nothing but headers.
 const PANEL_TIMEOUT_MS = 15_000;
 
-// Recycle Chromium after this many businesses, to bound peak memory on a
-// 512MB instance. Each recycle costs a relaunch plus re-scrolling the feed
-// back to where it was, so this trades a little speed for not being OOM-killed
-// mid-run — raise it if the instance has RAM to spare.
-const RECYCLE_AFTER_LEADS = 10;
+// Listings scraped in parallel, each in its own tab. The Dockerfile sets 1 for
+// Render's 512MB instance; a desktop handles 3 easily. Higher is faster but
+// also looks more like a bot to Google.
+const CONCURRENCY = Number(process.env.SCRAPE_CONCURRENCY) || 3;
 
-export async function scrapeGoogleMaps(
+const FEED = 'div[role="feed"]';
+const CARD = `${FEED} a[href*="/maps/place/"]`;
+
+type Candidate = { name: string; mapsUrl: string };
+
+// Phase 1: scroll the results feed and collect listing links — no clicking.
+// Scrolling is the cheap part of a scrape, so doing all of it up front means a
+// resumed call catches up past already-saved businesses in seconds, and phase 2
+// never has to find its place in the feed again.
+async function collectCandidates(
+  context: BrowserContext,
   query: string,
   limit: number,
-  headless = true,
-  // Place IDs (see dedupeKey) of businesses already collected, so a re-scrape
-  // skips them instead of re-clicking into the same listings.
-  excludeKeys: Set<string> = new Set(),
-  // Persisting each business as it's found (see below) means a mid-run stop
-  // — whether from the time budget or a platform kill — loses at most the
-  // one business in flight; the next call picks up from there via excludeKeys.
-  onLead?: (lead: Lead) => Promise<void>,
-  budgetMs: number = DEFAULT_BUDGET_MS
-): Promise<{ leads: Lead[]; exhausted: boolean }> {
-  const startedAt = Date.now();
-  const withinBudget = () => Date.now() - startedAt < budgetMs;
-  const results: Lead[] = [];
-  const fallback = guessNicheAndCityFromQuery(query);
-
-  const feedSelector = 'div[role="feed"]';
-
-  // A whole browser session: launch, load the search, clear consent, wait for
-  // the feed. Called again mid-run to recycle Chromium (see the loop below).
-  const openSession = async () => {
-    const browser = await launchBrowser(headless);
-    const context = await browser.newContext({ locale: "en-US", viewport: { width: 1280, height: 900 } });
-    // Map tiles and business photos are the bulk of what Maps downloads and
-    // decodes, and every field scraped below comes from the DOM (aria-labels,
-    // text) — never from a rendered image. Stylesheets are deliberately NOT
-    // blocked: the detail-panel waitFor() below checks visibility, which needs
-    // real layout to resolve.
-    await context.route("**/*", (route) => {
-      const type = route.request().resourceType();
-      return type === "image" || type === "media" || type === "font" ? route.abort() : route.continue();
-    });
-    const page = await context.newPage();
-
+  seen: Set<string>,
+  withinBudget: () => boolean
+): Promise<{ candidates: Candidate[]; exhausted: boolean }> {
+  const page = await context.newPage();
+  try {
     await page.goto(`https://www.google.com/maps/search/${query.replace(/ /g, "+")}`, { timeout: 30000 });
 
     try {
@@ -89,168 +67,220 @@ export async function scrapeGoogleMaps(
     }
 
     try {
-      await page.waitForSelector(feedSelector, { timeout: 15000 });
+      await page.waitForSelector(FEED, { timeout: 15000 });
     } catch {
+      // Not "no more results" — a CAPTCHA, or a query that resolved straight to
+      // one place. Returning not-exhausted lets the caller's no-progress guard
+      // stop the loop instead of reporting the search as finished.
       console.error("scrape_maps: results feed never appeared — Google may be showing a CAPTCHA.");
-    }
-    return { browser, page };
-  };
-
-  let { browser, page } = await openSession();
-  let scrapedThisSession = 0;
-
-  // Seeding with already-collected businesses lets a run build up a result set
-  // across several separate scrape calls instead of one call finishing the
-  // whole limit — each call skips past what's already collected and clicks
-  // into fresh cards instead of re-fetching the same first N every time. It's
-  // also what makes a *re-scrape* of the same query return new businesses
-  // rather than the ones already in the table.
-  const seenKeys = new Set(excludeKeys);
-  let stagnantRounds = 0;
-  let lastCardCount = 0;
-
-  while (results.length < limit && stagnantRounds < 5 && withinBudget()) {
-    // Chromium's footprint grows with every detail panel it renders, and on a
-    // 512MB instance a long run OOMs partway through — the container gets
-    // killed and restarted, losing the in-flight browser. Recycling caps peak
-    // memory at roughly one short session's worth. seenNames survives the
-    // swap, so the fresh session scrolls past what's already collected rather
-    // than rescraping it.
-    if (scrapedThisSession >= RECYCLE_AFTER_LEADS) {
-      console.error(`scrape_maps: recycling browser after ${scrapedThisSession} leads to cap memory`);
-      await browser.close();
-      ({ browser, page } = await openSession());
-      scrapedThisSession = 0;
-      lastCardCount = 0;
-      stagnantRounds = 0;
+      return { candidates: [], exhausted: false };
     }
 
-    // Match on the stable /maps/place/ URL pattern rather than a specific div
-    // nesting depth or class name — Google reshuffles those often enough
-    // that a structural selector silently matches zero cards.
-    const cards = await page.locator(`${feedSelector} a[href*="/maps/place/"]`).all();
-    console.error(`scrape_maps: found ${cards.length} card(s) this round, ${results.length}/${limit} collected so far`);
+    const candidates: Candidate[] = [];
+    let stagnantRounds = 0;
+    while (candidates.length < limit && withinBudget()) {
+      // One round-trip for every card, instead of two getAttribute calls each.
+      const cards = await page
+        .locator(CARD)
+        .evaluateAll((els) => els.map((a) => [a.getAttribute("aria-label"), a.getAttribute("href")]));
 
-    for (const card of cards) {
-      if (results.length >= limit) break;
-      if (!withinBudget()) break; // out of time this call — return what we have, resume next call
-      const name = await card.getAttribute("aria-label").catch(() => null);
-      if (!name) continue; // card had no aria-label — likely a photo/thumbnail link, not the name link
-      // The card *is* the link to the listing, so its href is the profile URL.
-      const mapsUrl = (await card.getAttribute("href").catch(() => null)) || "";
-      // Read the identity off the card *before* clicking, so a business we've
-      // already got costs nothing — no click, no panel wait, no scrape.
-      const key = dedupeKey({ name, mapsUrl });
-      if (seenKeys.has(key)) continue;
-      seenKeys.add(key);
-
-      // The open detail panel is a second role="main" whose accessible name
-      // is the business name, so waiting for it proves *this* business's
-      // panel is up — and scoping every read below to it is what stops the
-      // page-wide locators from matching the results feed instead, which is
-      // how every lead ended up with the first feed card's rating.
-      const panel = page.getByRole("main", { name });
-      try {
-        await card.click();
-        await panel.waitFor({ timeout: PANEL_TIMEOUT_MS });
-      } catch {
-        // Panel never opened — a slow instance, or Google throttling. Skip
-        // rather than save a row with every field blank: nothing was learned
-        // about this business, and leaving it unsaved means a later call
-        // retries it, since excludeNames is seeded from saved leads only.
-        continue;
+      for (const [name, href] of cards) {
+        if (candidates.length >= limit) break;
+        if (!name) continue; // photo/thumbnail link, not the name link
+        const mapsUrl = href || "";
+        const key = dedupeKey({ name, mapsUrl });
+        if (seen.has(key)) continue;
+        seen.add(key);
+        candidates.push({ name, mapsUrl });
       }
-      await pause(400, 900);
+      console.error(`scrape_maps: ${cards.length} card(s) in feed, ${candidates.length}/${limit} new queued`);
+      if (candidates.length >= limit) break;
 
-      let phone = "";
-      let website = "";
-      let address = "";
-      let category = "";
-      let rating = "";
-      let reviews = "";
+      if ((await page.getByText("reached the end of the list").count()) > 0) {
+        return { candidates, exhausted: true };
+      }
 
-      try {
-        const phoneEl = panel.locator('button[data-item-id^="phone:"]').first();
-        if ((await phoneEl.count()) > 0) {
-          phone = ((await phoneEl.getAttribute("aria-label")) || "").replace("Phone: ", "").trim();
-        }
-      } catch {}
-
-      try {
-        const siteEl = panel.locator('a[data-item-id="authority"]').first();
-        if ((await siteEl.count()) > 0) website = (await siteEl.getAttribute("href")) || "";
-      } catch {}
-
-      try {
-        const addressEl = panel.locator('button[data-item-id="address"]').first();
-        if ((await addressEl.count()) > 0) {
-          address = ((await addressEl.getAttribute("aria-label")) || "").replace("Address: ", "").trim();
-        }
-      } catch {}
-
-      try {
-        const categoryEl = panel.locator("button.DkEaL").first();
-        if ((await categoryEl.count()) > 0) category = (await categoryEl.innerText()).trim();
-      } catch {}
-
-      try {
-        // Bare number only ("4.7", "5"): the panel's label reads "4.7 stars",
-        // with no review count on it unlike the feed card's.
-        const ratingEl = panel.locator('span[role="img"][aria-label*="star"]').first();
-        if ((await ratingEl.count()) > 0) {
-          rating = ((await ratingEl.getAttribute("aria-label")) || "").match(/[\d.]+/)?.[0] ?? "";
-        }
-      } catch {}
-
-      try {
-        // Sits beside the stars as "(17)" with aria-label "17 reviews". The
-        // per-star breakdown rows say "5 stars, 2 reviews" too, but those are
-        // <tr>s — matching only a span keeps them out. Commas stripped so the
-        // column stays numeric in Sheets/Excel.
-        const reviewsEl = panel.locator('span[aria-label*="review"]').first();
-        if ((await reviewsEl.count()) > 0) {
-          const label = ((await reviewsEl.getAttribute("aria-label")) || "").trim();
-          reviews = label.match(/^([\d,]+)\s+reviews?$/i)?.[1].replace(/,/g, "") ?? "";
-        }
-      } catch {}
-
-      const lead: Lead = {
-        ...emptyLead(),
-        name,
-        mapsUrl,
-        phone,
-        rating,
-        reviews,
-        website,
-        city: address || fallback.city,
-        niche: category || fallback.niche,
-      };
-      results.push(lead);
-      scrapedThisSession++;
-      if (onLead) await onLead(lead);
-    }
-
-    // Stagnation means scrolling isn't loading more cards into the DOM at
-    // all — not "no new-to-us results this round," which can legitimately
-    // happen for several rounds in a row when excludeNames pre-seeds a lot
-    // of already-collected businesses near the top of the results.
-    stagnantRounds = cards.length === lastCardCount ? stagnantRounds + 1 : 0;
-    lastCardCount = cards.length;
-
-    try {
+      // Wait for the feed to actually grow rather than sleeping a fixed time —
+      // returns the moment new cards land, usually well under a second.
       await page.evaluate((sel) => {
         const feed = document.querySelector(sel);
         if (feed) feed.scrollTop = feed.scrollHeight;
-      }, feedSelector);
-    } catch {}
-    await pause(1200, 2200);
+      }, FEED);
+      const grew = await page
+        .waitForFunction(([sel, n]) => document.querySelectorAll(sel).length > n, [CARD, cards.length] as const, {
+          timeout: 5000,
+        })
+        .then(
+          () => true,
+          () => false
+        );
+      stagnantRounds = grew ? 0 : stagnantRounds + 1;
+      if (stagnantRounds >= 3) return { candidates, exhausted: true };
+    }
+    return { candidates, exhausted: false };
+  } finally {
+    await page.close().catch(() => {});
   }
+}
 
-  // Only treat it as "no more results exist" when scrolling genuinely
-  // stopped loading new cards — not when we simply ran out of time budget,
-  // which just means resume on the next call.
-  const exhausted = stagnantRounds >= 5;
+// Phase 2: open one listing directly and read its detail panel. A fresh tab per
+// listing, closed straight after, so memory can't build up over a run the way
+// it did clicking through one long-lived Maps page — which is what the old
+// every-10-leads browser recycle (and its re-scroll) was working around.
+async function scrapePlace(
+  context: BrowserContext,
+  { name, mapsUrl }: Candidate,
+  fallback: { niche: string; city: string }
+): Promise<Lead | null> {
+  const page = await context.newPage();
+  try {
+    await page.goto(new URL(mapsUrl, "https://www.google.com").toString(), {
+      timeout: 30000,
+      waitUntil: "domcontentloaded",
+    });
+    // The detail panel is a role="main" whose accessible name is the business
+    // name. Waiting for it proves *this* business's panel is up, and scoping
+    // every read to it keeps locators off anything else on the page — the
+    // page-wide version is how every lead once got the same rating.
+    const panel = page.getByRole("main", { name });
+    try {
+      await panel.waitFor({ timeout: PANEL_TIMEOUT_MS });
+    } catch {
+      // Panel never opened — a slow instance, or Google throttling. Skip rather
+      // than save a row with every field blank; leaving it unsaved means a later
+      // call retries it, since the exclude set is seeded from saved leads only.
+      return null;
+    }
+    await pause(400, 900);
 
-  await browser.close();
-  return { leads: results.slice(0, limit), exhausted };
+    let phone = "";
+    let website = "";
+    let address = "";
+    let category = "";
+    let rating = "";
+    let reviews = "";
+
+    try {
+      const phoneEl = panel.locator('button[data-item-id^="phone:"]').first();
+      if ((await phoneEl.count()) > 0) {
+        phone = ((await phoneEl.getAttribute("aria-label")) || "").replace("Phone: ", "").trim();
+      }
+    } catch {}
+
+    try {
+      const siteEl = panel.locator('a[data-item-id="authority"]').first();
+      if ((await siteEl.count()) > 0) website = (await siteEl.getAttribute("href")) || "";
+    } catch {}
+
+    try {
+      const addressEl = panel.locator('button[data-item-id="address"]').first();
+      if ((await addressEl.count()) > 0) {
+        address = ((await addressEl.getAttribute("aria-label")) || "").replace("Address: ", "").trim();
+      }
+    } catch {}
+
+    try {
+      const categoryEl = panel.locator("button.DkEaL").first();
+      if ((await categoryEl.count()) > 0) category = (await categoryEl.innerText()).trim();
+    } catch {}
+
+    try {
+      // Bare number only ("4.7", "5"): the panel's label reads "4.7 stars",
+      // with no review count on it unlike the feed card's.
+      const ratingEl = panel.locator('span[role="img"][aria-label*="star"]').first();
+      if ((await ratingEl.count()) > 0) {
+        rating = ((await ratingEl.getAttribute("aria-label")) || "").match(/[\d.]+/)?.[0] ?? "";
+      }
+    } catch {}
+
+    try {
+      // Sits beside the stars as "(17)" with aria-label "17 reviews". The
+      // per-star breakdown rows say "5 stars, 2 reviews" too, but those are
+      // <tr>s — matching only a span keeps them out. Commas stripped so the
+      // column stays numeric in Sheets/Excel.
+      const reviewsEl = panel.locator('span[aria-label*="review"]').first();
+      if ((await reviewsEl.count()) > 0) {
+        const label = ((await reviewsEl.getAttribute("aria-label")) || "").trim();
+        reviews = label.match(/^([\d,]+)\s+reviews?$/i)?.[1].replace(/,/g, "") ?? "";
+      }
+    } catch {}
+
+    return {
+      ...emptyLead(),
+      name,
+      mapsUrl,
+      phone,
+      rating,
+      reviews,
+      website,
+      city: address || fallback.city,
+      niche: category || fallback.niche,
+    };
+  } catch {
+    return null; // navigation failed — same as a panel timeout, retried next call
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
+export async function scrapeGoogleMaps(
+  query: string,
+  limit: number,
+  headless = true,
+  // Place IDs (see dedupeKey) of businesses already collected, so a re-scrape
+  // skips them instead of re-opening the same listings.
+  excludeKeys: Set<string> = new Set(),
+  // Persisting each business as it's found means a mid-run stop — whether
+  // from the time budget or a platform kill — loses at most the listings in
+  // flight; the next call picks up from there via excludeKeys.
+  onLead?: (lead: Lead) => Promise<void>,
+  budgetMs: number = DEFAULT_BUDGET_MS
+): Promise<{ leads: Lead[]; exhausted: boolean }> {
+  const startedAt = Date.now();
+  const withinBudget = () => Date.now() - startedAt < budgetMs;
+  const fallback = guessNicheAndCityFromQuery(query);
+
+  const browser = await launchBrowser(headless);
+  try {
+    const context = await browser.newContext({ locale: "en-US", viewport: { width: 1280, height: 900 } });
+    // Map tiles and business photos are the bulk of what Maps downloads and
+    // decodes, and every field scraped comes from the DOM (aria-labels, text) —
+    // never from a rendered image. Stylesheets are deliberately NOT blocked:
+    // the panel waitFor() checks visibility, which needs real layout.
+    await context.route("**/*", (route) => {
+      const type = route.request().resourceType();
+      return type === "image" || type === "media" || type === "font" ? route.abort() : route.continue();
+    });
+
+    const { candidates, exhausted: feedExhausted } = await collectCandidates(
+      context,
+      query,
+      limit,
+      new Set(excludeKeys),
+      withinBudget
+    );
+
+    const results: Lead[] = [];
+    let next = 0;
+    const worker = async () => {
+      while (next < candidates.length && withinBudget()) {
+        const lead = await scrapePlace(context, candidates[next++], fallback);
+        if (!lead) continue;
+        results.push(lead);
+        console.error(`scrape_maps: ${results.length}/${candidates.length} scraped — ${lead.name}`);
+        // A failed checkpoint isn't fatal: the route upserts every returned lead
+        // again once scraping finishes.
+        if (onLead) await onLead(lead).catch((err) => console.error(`scrape_maps: save failed for ${lead.name}:`, err));
+        await pause(300, 800);
+      }
+    };
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+
+    // "No more results exist" only when the feed itself ran out *and* every
+    // listing it gave us was attempted — running out of time budget just means
+    // resume on the next call.
+    return { leads: results, exhausted: feedExhausted && next >= candidates.length };
+  } finally {
+    await browser.close();
+  }
 }

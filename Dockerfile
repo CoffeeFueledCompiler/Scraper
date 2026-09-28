@@ -19,5 +19,7 @@ ENV NODE_ENV=production
 # Chromium — without a cap Node sizes its heap against total container memory
 # and both grow into each other, ending in an OOM kill.
 ENV NODE_OPTIONS=--max-old-space-size=256
+# One listing tab at a time (see lib/scrapeMaps.ts) — 512MB has no room for more.
+ENV SCRAPE_CONCURRENCY=1
 EXPOSE 3000
 CMD ["npm", "start"]
