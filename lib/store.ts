@@ -30,6 +30,12 @@ export async function writeLeads(leads: Lead[]): Promise<void> {
   }
 }
 
+// contactPhone is written by the Apollo webhook, on its own schedule, while
+// every stage does read-modify-write on whole rows. A stage still holding a
+// copy read before the phone arrived must not blank it out, so an empty
+// contactPhone is left out of updates instead of written.
+const forUpdate = ({ contactPhone, ...rest }: Lead) => (contactPhone ? { ...rest, contactPhone } : rest);
+
 // Save one lead without reading the table back — for the scrape loop's
 // per-lead checkpoint, which discards the result anyway. upsertLeads' full
 // readLeads() there meant a whole-table SELECT per business scraped.
@@ -37,7 +43,7 @@ export async function saveLead(lead: Lead): Promise<void> {
   await prisma.lead.upsert({
     where: { name_city: { name: lead.name, city: lead.city } },
     create: lead,
-    update: lead,
+    update: forUpdate(lead),
   });
 }
 
@@ -47,8 +53,15 @@ export async function upsertLeads(updates: Lead[]): Promise<Lead[]> {
     await prisma.lead.upsert({
       where: { name_city: { name: data.name, city: data.city } },
       create: data,
-      update: data,
+      update: forUpdate(data),
     });
   }
   return readLeads();
+}
+
+// For the Apollo webhook. updateMany, not update: a lead cleared from the
+// table before its phone arrived is simply a no-op, not an error.
+export async function setContactPhone(name: string, city: string, contactPhone: string): Promise<number> {
+  const { count } = await prisma.lead.updateMany({ where: { name, city }, data: { contactPhone } });
+  return count;
 }

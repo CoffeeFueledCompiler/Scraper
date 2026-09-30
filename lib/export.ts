@@ -21,7 +21,7 @@ export function buildFinalRows(leads: Lead[]): { header: string[]; rows: string[
       const value = lead[c.field];
       // A leading apostrophe forces Sheets/Excel to treat the cell as text,
       // so a phone number like "+1 626-359-0204" doesn't get read as a formula.
-      return c.field === "phone" && value ? `'${value}` : value;
+      return (c.field === "phone" || c.field === "contactPhone") && value ? `'${value}` : value;
     }),
   ]);
 

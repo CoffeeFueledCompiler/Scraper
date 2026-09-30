@@ -11,6 +11,11 @@ export type Lead = {
   rating: string;
   reviews: string;
   email: string;
+  // The business's top person, from Apollo (see lib/apollo.ts). contactPhone
+  // arrives after the rest — Apollo delivers phone numbers to a webhook.
+  contactName: string;
+  contactTitle: string;
+  contactPhone: string;
   observation: string;
   impact: string;
   solution: string;
@@ -29,6 +34,9 @@ export const emptyLead = (): Lead => ({
   rating: "",
   reviews: "",
   email: "",
+  contactName: "",
+  contactTitle: "",
+  contactPhone: "",
   observation: "",
   impact: "",
   solution: "",
@@ -70,4 +78,10 @@ export const FINAL_COLUMNS: { header: string; field: keyof Lead }[] = [
   { header: "Website", field: "website" },
   { header: "Subject", field: "subject" },
   { header: "Generated Email", field: "generatedEmail" },
+  // Appended, not slotted in beside Email: Sheets export appends under an
+  // existing header row, so inserting columns mid-row would shift every
+  // later column out from under its header in sheets exported before.
+  { header: "Contact Name", field: "contactName" },
+  { header: "Contact Title", field: "contactTitle" },
+  { header: "Contact Phone", field: "contactPhone" },
 ];

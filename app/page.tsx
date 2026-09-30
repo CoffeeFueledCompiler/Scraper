@@ -93,6 +93,9 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(20);
   const [batchSize, setBatchSize] = useState(10);
+  // Emails step: Apollo (top person's email, spends credits) or the free
+  // website search. See /api/enrich.
+  const [useApollo, setUseApollo] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState("");
   const [pipelineStep, setPipelineStep] = useState<number | null>(null);
@@ -155,7 +158,7 @@ export default function Home() {
     setSessionKeys([]);
     const bodies: Record<string, any> = {
       scrape: { query, limit },
-      enrich: { limit: batchSize },
+      enrich: { limit: batchSize, source: useApollo ? "apollo" : "website" },
       analyze: { batchSize },
       "generate-email": { batchSize },
     };
@@ -302,6 +305,19 @@ export default function Home() {
             Batch size
             <input type="number" value={batchSize} onChange={(e) => setBatchSize(Number(e.target.value))} />
           </label>
+          <label className="field" title="On: find the business's top person and their email with Apollo (spends Apollo credits), falling back to the website search. Off: website search only.">
+            Emails via
+            <span className="switch">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={useApollo}
+                disabled={!!busy}
+                onChange={(e) => setUseApollo(e.target.checked)}
+              />
+              <span>{useApollo ? "Apollo" : "Website"}</span>
+            </span>
+          </label>
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -343,7 +359,7 @@ export default function Home() {
           <table>
             <thead>
               <tr>
-                {["Name", "Phone", "Website", "City", "Niche", "Rating", "Email", "Observation", "Subject", "Status"].map((h) => (
+                {["Name", "Phone", "Website", "City", "Niche", "Rating", "Email", "Contact", "Observation", "Subject", "Status"].map((h) => (
                   <th key={h}>{h}</th>
                 ))}
               </tr>
@@ -364,6 +380,11 @@ export default function Home() {
                   <td>{l.niche}</td>
                   <td>{l.rating}</td>
                   <td>{l.email}</td>
+                  <td>
+                    {l.contactName}
+                    {l.contactTitle && <div style={{ color: "var(--muted)", fontSize: 12 }}>{l.contactTitle}</div>}
+                    {l.contactPhone && <div style={{ fontSize: 12 }}>{l.contactPhone}</div>}
+                  </td>
                   <td className="truncate" style={{ maxWidth: 280 }}>
                     {l.observation}
                   </td>

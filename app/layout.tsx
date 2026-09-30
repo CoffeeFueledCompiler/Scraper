@@ -40,6 +40,20 @@ const themeStyle = `
   }
   .field input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+  /* Pill toggle built on a native checkbox (role="switch"), so keyboard and screen readers work as-is. */
+  .switch { display: inline-flex; align-items: center; gap: 8px; height: 38px; font-size: 14px; font-weight: 400; text-transform: none; letter-spacing: normal; color: var(--fg); }
+  .field .switch input {
+    appearance: none; -webkit-appearance: none; width: 36px; height: 20px; padding: 0; margin: 0; border-radius: 999px;
+    background: var(--border); border: none; position: relative; cursor: pointer; transition: background .15s; flex: none;
+  }
+  .field .switch input::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--fg); transition: transform .15s;
+  }
+  .field .switch input:checked { background: var(--accent); }
+  .field .switch input:checked::after { transform: translateX(16px); }
+  .field .switch input:disabled { opacity: .45; cursor: not-allowed; }
+
   .btn {
     display: inline-flex; align-items: center; gap: 7px; padding: 9px 14px; border-radius: 8px;
     border: 1px solid var(--border); background: var(--card); color: var(--fg); font-size: 13px; font-weight: 500;

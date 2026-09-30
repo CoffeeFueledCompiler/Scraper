@@ -10,6 +10,8 @@ export default withAuth({
 // Gate everything except the login page and NextAuth's own routes. This is
 // what actually stops a random visitor from triggering scrapes/AI calls on a
 // publicly deployed URL — the login page alone isn't enough without this.
+// api/apollo-webhook is called by Apollo, which can't log in; it checks its
+// own per-lead token instead (see that route).
 export const config = {
-  matcher: ["/((?!api/auth|login|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!api/auth|api/apollo-webhook|login|_next/static|_next/image|favicon.ico).*)"],
 };
