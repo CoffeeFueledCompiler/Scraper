@@ -5,7 +5,8 @@ businesses with their phone, website, email, an AI-written observation about
 their web presence, and a drafted cold email. Runs on your own computer.
 
 > **On a Mac?** Use the `mac` branch (`git checkout mac`) — same app, plus
-> Mac-specific setup. Its README picks up where this one leaves off.
+> Mac-specific setup. Follow `MAC.md` on that branch, then come back here
+> for how to use the app.
 
 ## What you need
 
