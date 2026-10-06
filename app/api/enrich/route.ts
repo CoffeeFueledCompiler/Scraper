@@ -5,9 +5,6 @@ import { readLeads, upsertLeads } from "@/lib/store";
 import { Lead, leadKey } from "@/lib/schema";
 
 export const runtime = "nodejs";
-// Vercel Hobby hard-kills any function at 60s regardless of this value —
-// declaring the real cap here instead of a number the plan can't honor.
-export const maxDuration = 60;
 
 // Apollo misses fall back to the website search, which has to fit in what's
 // left of a request after the Apollo calls — well inside a tunnel's ~100s.

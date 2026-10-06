@@ -1,7 +1,7 @@
 // Email enrichment — Stage 2. Visits each business's website looking for a
 // published email address.
 import { launchBrowser } from "./browser.ts";
-import type { BrowserContext } from "playwright-core";
+import type { BrowserContext } from "playwright";
 
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 const GENERIC_PREFIXES = ["info@", "contact@", "admin@", "office@", "support@"];
@@ -107,14 +107,12 @@ async function findEmailOnSite(context: BrowserContext, websiteUrl: string, time
 // overwhelming a single site's server. Revisit if batches grow much larger.
 const CONCURRENCY = 4;
 
-// Vercel Hobby hard-kills a function at 60s regardless of maxDuration — a
-// large batchSize could otherwise run chunk after chunk past that wall. This
-// budgets the loop so it always returns early with whatever's done; the
+// Budgets the loop so a call always returns early with whatever's done; the
 // caller (see /api/enrich) treats the shorter result as "processed so far"
 // and the rest as still `remaining`, same idea as scrapeMaps.ts's budget.
-// Hosts with no function cap get a longer budget for the same reason as
-// there: each resumed call pays for a fresh browser launch.
-const DEFAULT_BUDGET_MS = process.env.VERCEL ? 30_000 : 90_000;
+// 60s plus one in-flight chunk (each site is capped at SITE_DEADLINE_MS)
+// stays under the ~100s cutoff of a port-forwarding tunnel.
+const DEFAULT_BUDGET_MS = 60_000;
 
 export async function enrichWebsites(
   websites: string[],

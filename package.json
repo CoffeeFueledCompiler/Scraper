@@ -12,13 +12,11 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
-    "@sparticuz/chromium": "^149.0.0",
     "bcryptjs": "^3.0.3",
     "next": "^15.0.0",
     "next-auth": "^4.24.15",
     "pg": "^8.23.0",
     "playwright": "^1.47.0",
-    "playwright-core": "^1.63.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

@@ -162,9 +162,8 @@ export default function Home() {
       analyze: { batchSize },
       "generate-email": { batchSize },
     };
-    // Scrape is batched too now — Vercel Hobby's 60s cap can't fit scraping
-    // a full `limit` worth of businesses (each takes ~30s) in one call, so
-    // it loops the same way enrich/analyze/generate-email already do.
+    // Every stage stops each call within a time budget (see scrapeMaps.ts) and
+    // reports `remaining`, so a big `limit` runs as several short requests.
     const batchedSteps = new Set(["scrape", "enrich", "analyze", "generate-email"]);
     let scrapedKeysAccum: string[] = [];
     for (let i = 0; i < steps.length; i++) {

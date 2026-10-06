@@ -4,9 +4,6 @@ import { readLeads, saveLead, upsertLeads } from "@/lib/store";
 import { dedupeKey, leadKey } from "@/lib/schema";
 
 export const runtime = "nodejs";
-// Vercel Hobby hard-kills any function at 60s regardless of this value —
-// declaring the real cap here instead of a number the plan can't honor.
-export const maxDuration = 60;
 
 export async function POST(req: Request) {
   const { query, limit } = await req.json();
@@ -22,11 +19,8 @@ export async function POST(req: Request) {
   // spellings. Legacy rows with no mapsUrl still fall back to the name.
   const alreadyKnown = new Set((await readLeads()).map(dedupeKey));
 
-  // Only run non-headless in local dev, where there's a real display to
-  // solve a CAPTCHA on by hand. Any deployed host (Render, Vercel, ...) has
-  // no display — headless:false there just crashes trying to open a window.
-  // (Vercel forces headless regardless — see lib/browser.ts — but Render and
-  // other persistent-server hosts go through the same "headless" flag here.)
+  // `npm run dev` shows the browser window, so a Google CAPTCHA can be solved
+  // by hand; `npm start` (a production build) runs it headless.
   const headless = process.env.NODE_ENV === "production";
   // Save each business as it's found, not just once scraping finishes — a
   // business can take ~30s, so even a modest limit can outrun the scraping

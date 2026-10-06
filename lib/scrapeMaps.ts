@@ -5,7 +5,7 @@
 import { launchBrowser } from "./browser.ts";
 import { dedupeKey, emptyLead } from "./schema.ts";
 import type { Lead } from "./schema.ts";
-import type { BrowserContext } from "playwright-core";
+import type { BrowserContext } from "playwright";
 
 export function guessNicheAndCityFromQuery(query: string): { niche: string; city: string } {
   const match = query.match(/\bin\s+(.+)$/i);
@@ -17,23 +17,20 @@ export function guessNicheAndCityFromQuery(query: string): { niche: string; city
 
 const pause = (a = 800, b = 1800) => new Promise((r) => setTimeout(r, a + Math.random() * (b - a)));
 
-// Vercel Hobby hard-kills a function at 60s no matter what maxDuration says.
-// Elsewhere the ceiling is whatever sits in front of the server: dev tunnels
-// and Cloudflare cut a request at ~100s, and the old 90s budget plus the
-// listing still in flight plus browser teardown ran straight past that. 60s
-// leaves room for both; the frontend loops on `remaining` for the rest, and
-// resuming is cheap now that phase 1 only scrolls (no clicks) to catch up.
-const DEFAULT_BUDGET_MS = process.env.VERCEL ? 40_000 : 60_000;
+// Each /api/scrape call stops after this and the frontend loops on
+// `remaining` for the rest. A port-forwarding tunnel (sharing a local
+// instance) cuts a request at ~100s, and the old 90s budget plus the listing
+// still in flight plus browser teardown ran straight past that. Resuming is
+// cheap now that phase 1 only scrolls (no clicks) to catch up.
+const DEFAULT_BUDGET_MS = 60_000;
 
-// How long to wait for a business's detail panel to render. The old 8s was
-// tuned on a desktop; on Render's 0.5 CPU the panel routinely took longer,
-// every wait timed out, and each lead was saved with phone/website/address
-// blank — which is what left the CSV export with nothing but headers.
+// How long to wait for a business's detail panel to render. 8s timed out on
+// a slow machine, and each lead was saved with phone/website/address blank —
+// which is what left the CSV export with nothing but headers.
 const PANEL_TIMEOUT_MS = 15_000;
 
-// Listings scraped in parallel, each in its own tab. The Dockerfile sets 1 for
-// Render's 512MB instance; a desktop handles 3 easily. Higher is faster but
-// also looks more like a bot to Google.
+// Listings scraped in parallel, each in its own tab. 3 is comfortable on an
+// 8GB laptop. Higher is faster but also looks more like a bot to Google.
 const CONCURRENCY = Number(process.env.SCRAPE_CONCURRENCY) || 3;
 
 const FEED = 'div[role="feed"]';

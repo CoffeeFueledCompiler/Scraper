@@ -4,7 +4,6 @@ import { buildFinalRows } from "@/lib/export";
 import { writeSheetRows } from "@/lib/googleSheets";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
 
 export async function POST() {
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
