@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "caffeinate -i next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "caffeinate -i next start",
     "test": "node --test lib/**/*.test.ts",
     "postinstall": "node scripts/postinstall.js"
   },
